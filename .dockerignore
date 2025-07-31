@@ -1,0 +1,75 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Binary files
+/test.bin
+*.bin
+
+# Dependency cache
+.cargo-ok
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+
+# Environment configuration files
+.env
+.env.example
+.env.sample
+
+# Data directory
+/data/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Version control
+.git/
+.gitignore
+
+# macOS files
+.DS_Store
+
+# Windows files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Log files
+*.log
+/logs/
+
+# Backup files
+*~
+*.bak
+/.backup/
+
+# Documentation
+README.md
+CLAUDE.md
+
+# Test files
+/test/
+test_*.py
+test_*.txt
+*.sql
+
+# Scripts
+/scripts/
+run-server.sh
+fix_cargo.sh
+
+# Docker files
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Tools
+/tools/

@@ -1,0 +1,108 @@
+---
+
+name: Deploy Staging
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch: {}
+
+jobs:
+  Publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.STAGING_AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and Push Docker Image
+        id: build-image
+        env:
+          ECR_REPOSITORY: ${{ secrets.STAGING_AWS_ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+            --build-arg VCS_REF=$IMAGE_TAG \
+            --build-arg VERSION=$IMAGE_TAG \
+            --tag $ECR_REPOSITORY:$IMAGE_TAG \
+            .
+
+          docker push $ECR_REPOSITORY:$IMAGE_TAG
+
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REPOSITORY:latest
+          docker push $ECR_REPOSITORY:latest
+
+          echo "image=$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Download Task Definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ secrets.STAGING_AWS_TASK_DEFINITION }} \
+            --query taskDefinition > /tmp/task.json
+
+      - name: Fill in the new image ID in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: /tmp/task.json
+          container-name: app
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: staging-cosmic-sync-server
+          cluster: cosmic-staging-cluster
+          wait-for-service-stability: false
+
+      - name: Check ECS Service Status
+        run: |
+          echo "Checking ECS service status..."
+          aws ecs describe-services \
+            --cluster cosmic-staging-cluster \
+            --services staging-cosmic-sync-server \
+            --query 'services[0].{Status:status,RunningCount:runningCount,PendingCount:pendingCount,DesiredCount:desiredCount}'
+          
+          echo "Getting recent ECS events..."
+          aws ecs describe-services \
+            --cluster cosmic-staging-cluster \
+            --services staging-cosmic-sync-server \
+            --query 'services[0].events[:10]'
+          
+          echo "Getting task details..."
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster cosmic-staging-cluster \
+            --service-name staging-cosmic-sync-server \
+            --query 'taskArns[0]' --output text)
+          
+          if [ "$TASK_ARN" != "None" ]; then
+            echo "Task ARN: $TASK_ARN"
+            aws ecs describe-tasks \
+              --cluster cosmic-staging-cluster \
+              --tasks $TASK_ARN \
+              --query 'tasks[0].{LastStatus:lastStatus,HealthStatus:healthStatus,CreatedAt:createdAt,StoppedReason:stoppedReason}'
+            
+            echo "Getting container details..."
+            aws ecs describe-tasks \
+              --cluster cosmic-staging-cluster \
+              --tasks $TASK_ARN \
+              --query 'tasks[0].containers[?name==`app`].{Name:name,LastStatus:lastStatus,ExitCode:exitCode,Reason:reason}'
+          else
+            echo "No tasks found"
+          fi 

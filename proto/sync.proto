@@ -1,0 +1,742 @@
+syntax = "proto3";
+
+package sync;
+import "google/protobuf/timestamp.proto";
+
+service SyncService {
+    // Account login related functions
+    rpc Login(LoginRequest) returns (LoginResponse);
+    rpc VerifyLogin(VerifyLoginRequest) returns (VerifyLoginResponse);
+    rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+    
+    // OAuth authentication
+    rpc ExchangeOauthCode(OAuthExchangeRequest) returns (OAuthExchangeResponse);
+    // New OAuth login flow
+    rpc CheckAuthStatus(CheckAuthStatusRequest) returns (CheckAuthStatusResponse);
+    // Get account information using auth token
+    rpc GetAccountInfo(GetAccountInfoRequest) returns (GetAccountInfoResponse);
+    
+    // Device registration and management
+    rpc RegisterDevice(RegisterDeviceRequest) returns (RegisterDeviceResponse);
+    rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+    rpc DeleteDevice(DeleteDeviceRequest) returns (DeleteDeviceResponse);
+    rpc UpdateDeviceInfo(UpdateDeviceInfoRequest) returns (UpdateDeviceInfoResponse);
+    // 장치 업데이트 알림 스트리밍
+    rpc SubscribeToDeviceUpdates(SubscribeRequest) returns (stream DeviceUpdateNotification);
+    
+    // Encryption key management
+    rpc RequestEncryptionKey(RequestEncryptionKeyRequest) returns (RequestEncryptionKeyResponse);
+    // 암호화 키 업데이트 알림 스트리밍
+    rpc SubscribeToEncryptionKeyUpdates(SubscribeRequest) returns (stream EncryptionKeyUpdateNotification);
+    
+    // File synchronization functions
+    rpc UploadFile(UploadFileRequest) returns (UploadFileResponse);
+    rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+    rpc DownloadFile(DownloadFileRequest) returns (DownloadFileResponse);
+    rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+    // 파일 업데이트 알림 스트리밍
+    rpc SubscribeToFileUpdates(SubscribeRequest) returns (stream FileUpdateNotification);
+    // 파일 검색 기능
+    rpc FindFileByCriteria(FindFileRequest) returns (FindFileResponse);
+    // 파일 존재 여부 확인 (삭제된 파일도 확인)
+    rpc CheckFileExists(CheckFileExistsRequest) returns (CheckFileExistsResponse);
+
+    // Version management functions
+    // 파일 변경 히스토리 조회
+    rpc GetFileHistory(GetFileHistoryRequest) returns (GetFileHistoryResponse);
+    // 특정 버전의 파일 복원
+    rpc RestoreFileVersion(RestoreFileVersionRequest) returns (RestoreFileVersionResponse);
+    // 복원된 파일을 모든 클라이언트에 브로드캐스트
+    rpc BroadcastFileRestore(BroadcastFileRestoreRequest) returns (BroadcastFileRestoreResponse);
+    // 파일 버전 변경 알림 스트리밍
+    rpc SubscribeToVersionUpdates(SubscribeRequest) returns (stream VersionUpdateNotification);
+
+    // Watcher Preset management (LEGACY - use SyncConfiguration for bulk sync)
+    rpc RegisterWatcherPreset(RegisterWatcherPresetRequest) returns (RegisterWatcherPresetResponse);
+    rpc UpdateWatcherPreset(UpdateWatcherPresetRequest) returns (UpdateWatcherPresetResponse);
+    rpc GetWatcherPreset(GetWatcherPresetRequest) returns (GetWatcherPresetResponse);
+    // 워처 프리셋 업데이트 알림 스트리밍
+    rpc SubscribeToWatcherPresetUpdates(SubscribeRequest) returns (stream WatcherPresetUpdateNotification);
+
+    // Watcher Group management (LEGACY - use SyncConfiguration for bulk sync)
+    rpc RegisterWatcherGroup(RegisterWatcherGroupRequest) returns (RegisterWatcherGroupResponse);
+    rpc UpdateWatcherGroup(UpdateWatcherGroupRequest) returns (UpdateWatcherGroupResponse);
+    rpc DeleteWatcherGroup(DeleteWatcherGroupRequest) returns (DeleteWatcherGroupResponse);
+    rpc GetWatcherGroup(GetWatcherGroupRequest) returns (GetWatcherGroupResponse);
+    rpc GetWatcherGroups(GetWatcherGroupsRequest) returns (GetWatcherGroupsResponse);
+    // 워처 그룹 업데이트 알림 스트리밍
+    rpc SubscribeToWatcherGroupUpdates(SubscribeRequest) returns (stream WatcherGroupUpdateNotification);
+
+    // 인증 상태 업데이트 알림 스트리밍
+    rpc SubscribeToAuthUpdates(SubscribeRequest) returns (stream AuthUpdateNotification);
+
+    // Integrated configuration synchronization
+    rpc SyncConfiguration(SyncConfigurationRequest) returns (SyncConfigurationResponse);
+
+    // Health checking
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// 클라이언트 데몬이 제공하는 서비스
+service SyncClientService {
+    // 인증 상태 업데이트 알림
+    rpc NotifyAuthSuccess(AuthSuccessNotification) returns (AuthNotificationResponse);
+}
+
+// 구독 요청 공통 메시지
+message SubscribeRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+}
+
+// 인증 상태 업데이트 알림
+message AuthUpdateNotification {
+    enum UpdateType {
+        LOGIN = 0;
+        LOGOUT = 1;
+        TOKEN_REFRESH = 2;
+    }
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+    UpdateType update_type = 4;
+    int64 timestamp = 5;
+}
+
+// 암호화 키 업데이트 알림
+message EncryptionKeyUpdateNotification {
+    enum UpdateType {
+        CREATED = 0;
+        UPDATED = 1;
+    }
+    string account_hash = 1;
+    string device_hash = 2;
+    string encryption_key = 3;
+    UpdateType update_type = 4;
+    int64 timestamp = 5;
+}
+
+// 장치 업데이트 알림
+message DeviceUpdateNotification {
+    enum UpdateType {
+        REGISTERED = 0;
+        UPDATED = 1;
+        DELETED = 2;
+    }
+    string account_hash = 1;
+    string device_hash = 2;
+    DeviceInfo device_info = 3;
+    UpdateType update_type = 4;
+    int64 timestamp = 5;
+}
+
+// 파일 업데이트 알림
+message FileUpdateNotification {
+    enum UpdateType {
+        UPLOADED = 0;
+        UPDATED = 1;
+        DELETED = 2;
+    }
+    string account_hash = 1;
+    string device_hash = 2;
+    FileInfo file_info = 3;
+    UpdateType update_type = 4;
+    int64 timestamp = 5;
+}
+
+// 워처 프리셋 업데이트 알림
+message WatcherPresetUpdateNotification {
+    enum UpdateType {
+        CREATED = 0;
+        UPDATED = 1;
+        DELETED = 2;
+    }
+    string account_hash = 1;
+    string device_hash = 2;
+    repeated string presets = 3;
+    UpdateType update_type = 4;
+    int64 timestamp = 5;
+}
+
+// 워처 그룹 업데이트 알림
+message WatcherGroupUpdateNotification {
+    enum UpdateType {
+        CREATED = 0;
+        UPDATED = 1;
+        DELETED = 2;
+    }
+    string account_hash = 1;
+    string device_hash = 2;
+    WatcherGroupData group_data = 3;
+    UpdateType update_type = 4;
+    int64 timestamp = 5;
+}
+
+// 파일 버전 업데이트 알림
+message VersionUpdateNotification {
+    enum UpdateType {
+        VERSION_CREATED = 0;
+        VERSION_RESTORED = 1;
+        VERSION_DELETED = 2;
+    }
+    string account_hash = 1;
+    string device_hash = 2;
+    uint64 file_id = 3;
+    int64 revision = 4;
+    string file_path = 5;
+    UpdateType update_type = 6;
+    int64 timestamp = 7;
+    string source_device_hash = 8; // 복원을 요청한 장치
+}
+
+// 인증 성공 알림
+message AuthSuccessNotification {
+    string session_id = 1;      // 세션 ID
+    string auth_token = 2;      // 인증 토큰
+    string account_hash = 3;    // 계정 해시
+    string device_hash = 4;     // 장치 해시
+    string encryption_key = 5;  // 암호화 키
+    int64 expires_in = 6;       // 만료 시간(초)
+}
+
+// 인증 알림 응답
+message AuthNotificationResponse {
+    bool success = 1;
+    string return_message = 2;
+}
+
+// Login related messages
+message LoginRequest {
+    string email = 1;
+    string password = 2;
+}
+
+message LoginResponse {
+    bool success = 1;
+    string auth_token = 2;
+    string account_hash = 3;
+    string return_message = 4;
+}
+
+message VerifyLoginRequest {
+    string auth_token = 1;
+}
+
+message VerifyLoginResponse {
+    bool valid = 1;
+    string account_hash = 2;
+}
+
+// OAuth related messages
+message OAuthExchangeRequest {
+    string code = 1;
+    string auth_token = 2;
+    string device_hash = 3;      // 장치 해시
+    string os_version = 4;       // OS 버전
+    string app_version = 5;      // 앱 버전
+}
+
+message OAuthExchangeResponse {
+    bool success = 1;
+    string auth_token = 2;
+    string account_hash = 3;
+    optional string encryption_key = 4;
+    string return_message = 5;
+}
+
+message CheckAuthStatusRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+
+}
+
+message CheckAuthStatusResponse {
+    bool is_complete = 1;
+    bool success = 2;
+    string auth_token = 3;
+    string account_hash = 4;
+    string encryption_key = 5;
+    int64 expires_in = 6;
+    string return_message = 7;
+    string session_id = 8;
+}
+
+// Token validation
+message ValidateTokenRequest {
+    string token = 1;
+}
+
+message ValidateTokenResponse {
+    bool is_valid = 1;
+    string account_hash = 2;
+}
+
+// Device update message
+message UpdateDeviceInfoRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    bool is_active = 3;
+    string os_version = 4;
+    string app_version = 5;
+}
+
+message UpdateDeviceInfoResponse {
+    bool success = 1;
+    string return_message = 2;
+}
+
+// Extended device registration messages
+message RegisterDeviceRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    bool is_active = 3;
+    string os_version = 4;
+    string app_version = 5;
+    string auth_token = 6;
+}
+
+message RegisterDeviceResponse {
+    bool success = 1;
+    string device_hash = 2;
+    string return_message = 3;
+}
+
+message ListDevicesRequest {
+    string account_hash = 1;
+    string auth_token = 2;
+}
+
+message ListDevicesResponse {
+    bool success = 1;
+    repeated DeviceInfo devices = 2;
+    string return_message = 3;
+}
+
+message DeviceInfo {
+    string account_hash = 1;
+    bool is_active = 2;
+    string device_hash = 3;
+    string os_version = 4;
+    string app_version = 5;
+    google.protobuf.Timestamp registered_at = 6;
+    google.protobuf.Timestamp last_sync_time = 7;
+}
+
+message DeleteDeviceRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+}
+
+message DeleteDeviceResponse {
+    bool success = 1;
+    string return_message = 2;
+}
+
+// Encryption key related messages
+message RequestEncryptionKeyRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+}
+
+message RequestEncryptionKeyResponse {
+    bool success = 1;
+    string encryption_key = 2;
+    string return_message = 3;
+}
+
+// File related messages
+message UploadFileRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string filename = 3;
+    string file_path = 4;
+    bytes file_data = 5;
+    string file_hash = 6;
+    string auth_token = 7;
+    int32 group_id = 8;
+    int32 watcher_id = 9;
+    bool is_encrypted = 10;
+    int64 revision = 11;
+    google.protobuf.Timestamp updated_time = 12;
+    uint64 file_size = 13;
+}
+
+message UploadFileResponse {
+    bool success = 1;
+    uint64 file_id = 2;
+    int64 new_revision = 3;
+    string return_message = 4;
+}
+
+message DownloadFileRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    int32 group_id = 3;
+    int32 watcher_id = 4;    
+    uint64 file_id = 5;
+    string auth_token = 6;
+    int64 revision = 7;
+}
+
+message DownloadFileResponse {
+    bool success = 1;
+    string filename = 2;
+    string file_path = 3;
+    bytes file_data = 4;
+    string file_hash = 5;
+    bool is_encrypted = 6;
+    string return_message = 7;
+    google.protobuf.Timestamp updated_time = 8;
+}
+
+message ListFilesRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    int32 group_id = 3;
+    string auth_token = 4;
+    google.protobuf.Timestamp upload_time_from = 5;
+}
+
+message ListFilesResponse {
+    bool success = 1;
+    repeated FileInfo files = 2;
+    string return_message = 3;
+}
+
+message FileInfo {
+    uint64 file_id = 1;
+    string filename = 2;
+    string file_hash = 3;
+    google.protobuf.Timestamp updated_time = 4;
+    string device_hash = 5;
+    int32 group_id = 6;
+    int32 watcher_id = 7;
+    bool is_encrypted = 8;
+    string file_path = 9;
+    int64 revision = 10;
+    uint64 file_size = 11;
+}
+
+message DeleteFileRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string filename = 3;
+    string file_path = 4;
+    uint64 file_id = 5;
+    int32 group_id = 6;
+    int32 watcher_id = 7;
+    google.protobuf.Timestamp updated_time = 8;
+    int64 revision = 9;
+    string auth_token = 10;
+}
+
+message DeleteFileResponse {
+    bool success = 1;
+    string return_message = 2;
+}
+
+// Individual Watcher management messages
+message RegisterWatcherPresetRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    repeated string presets = 3;
+    string auth_token = 4;
+}
+
+message RegisterWatcherPresetResponse {
+    bool success = 1;
+    string return_message = 2;
+}
+
+message UpdateWatcherPresetRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    repeated string presets = 3;
+    string auth_token = 4;
+}
+
+message UpdateWatcherPresetResponse {
+    bool success = 1;
+    string return_message = 2;
+}
+
+// GetWatcherPreset 요청 및 응답 메시지 정의
+message GetWatcherPresetRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+}
+
+message GetWatcherPresetResponse {
+    bool success = 1;
+    repeated string presets = 2;
+    string return_message = 3;
+}
+
+// Individual Watcher management messages
+message RegisterWatcherGroupRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    int32 group_id = 3;
+    string title = 4;
+    WatcherData watcher_data = 5;
+    string auth_token = 6;
+}
+
+message RegisterWatcherGroupResponse {
+    bool success = 1;
+    int32 group_id = 2;
+    string return_message = 3;
+}
+
+message UpdateWatcherGroupRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    int32 group_id = 3;
+    string title = 4;
+    WatcherData watcher_data = 5;
+    string auth_token = 6;
+}
+
+message UpdateWatcherGroupResponse {
+    bool success = 1;
+    int32 group_id = 2;
+    string return_message = 3;
+}
+
+message DeleteWatcherGroupRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    int32 group_id = 3;
+    string auth_token = 4;
+}
+
+message DeleteWatcherGroupResponse {
+    bool success = 1;
+    int32 group_id = 2;
+    string return_message = 3;
+}
+
+// 개별 WatcherGroup 조회 요청
+message GetWatcherGroupRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    int32 group_id = 3;         // 그룹 ID
+    string auth_token = 4;
+}
+
+message GetWatcherGroupResponse {
+    bool success = 1;
+    WatcherGroupData watchergroup = 2;  // 요청한 Watcher 데이터 목록
+    string return_message = 3;
+}
+
+// 전체 WatcherGroup 조회 요청
+message GetWatcherGroupsRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 4;
+}
+
+message GetWatcherGroupsResponse {
+    bool success = 1;
+    repeated WatcherGroupData watchergroup = 2;  // 요청한 Watcher 데이터 목록
+    string return_message = 3;
+}
+
+message WatcherGroupData {
+    int32 group_id = 1;
+    string title = 2;
+    repeated WatcherData watchers = 3;
+    google.protobuf.Timestamp last_updated = 4;
+}
+
+message WatcherData {
+    int32 watcher_id = 1;       // Watcher ID 추가
+    string folder = 2;
+    repeated ConditionData union_conditions = 3;
+    repeated ConditionData subtracting_conditions = 4;
+    bool recursive_path = 5;
+    bool preset = 6;
+    string custom_type = 7;
+    string update_mode = 8;
+    bool is_active = 9;
+    string extra_json = 10;
+}
+
+message ConditionData {
+    string key = 1;
+    repeated string value = 2;
+}
+
+// Health check related messages
+message HealthCheckRequest {
+    // Empty request
+}
+
+message HealthCheckResponse {
+    string status = 1; // "SERVING", "NOT_SERVING", etc.
+    string version = 2; // Optional server version info
+}
+
+// Account info retrieval messages
+message GetAccountInfoRequest {
+    string auth_token = 1;
+}
+
+message GetAccountInfoResponse {
+    bool success = 1;
+    string account_hash = 2;
+    string encryption_key = 3;
+    string return_message = 4;
+}
+
+// 파일 검색을 위한 요청 및 응답 메시지
+message FindFileRequest {
+  string account_hash = 1;
+  string device_hash = 2;
+  string auth_token = 3;
+  int32 group_id = 4;
+  int32 watcher_id = 5;
+  string file_path = 6;
+  string file_name = 7;
+}
+
+message FindFileResponse {
+  bool success = 1;
+  string return_message = 2;
+  uint64 file_id = 3;
+  int64 revision = 4;
+  FileInfo file_info = 5;  // 전체 파일 정보 포함
+}
+
+// 파일 존재 여부 확인 (삭제된 파일도 확인)
+message CheckFileExistsRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    uint64 file_id = 3;      // 파일 ID로 확인
+    string auth_token = 4;
+}
+
+message CheckFileExistsResponse {
+    bool success = 1;        // API 호출 성공 여부
+    bool exists = 2;         // 파일 존재 여부
+    bool is_deleted = 3;     // 파일 삭제 상태
+    string return_message = 4;
+}
+
+// Integrated configuration synchronization messages
+message SyncConfigurationRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+    repeated WatcherGroupData watcher_groups = 4;
+    repeated string presets = 5;
+    bool incremental = 6;                         // 증분 동기화 vs 전체 동기화
+    bool force_update = 7;                        // 강제 업데이트 플래그
+    int64 client_timestamp = 8;                   // 클라이언트 타임스탬프
+}
+
+message SyncConfigurationResponse {
+    bool success = 1;
+    string return_message = 2;
+    SyncStats stats = 3;                          // 동기화 통계
+    repeated WatcherGroupData server_watcher_groups = 4;  // 서버의 최신 watcher groups
+    repeated string server_presets = 5;           // 서버의 최신 presets
+    int64 server_timestamp = 6;                   // 서버 타임스탬프
+    bool conflicts_detected = 7;                  // 충돌 감지 여부
+    repeated string conflict_details = 8;         // 충돌 상세 정보
+}
+
+message SyncStats {
+    int32 groups_updated = 1;                     // 업데이트된 그룹 수
+    int32 groups_created = 2;                     // 생성된 그룹 수
+    int32 groups_deleted = 3;                     // 삭제된 그룹 수
+    int32 presets_updated = 4;                    // 업데이트된 프리셋 수
+    int64 sync_timestamp = 5;                     // 동기화 타임스탬프
+    int32 total_operations = 6;                   // 총 작업 수
+    double sync_duration_ms = 7;                  // 동기화 소요 시간(밀리초)
+}
+
+// 파일 히스토리 조회 요청
+message GetFileHistoryRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+    // 필수 입력값: 파일 또는 폴더 경로
+    string file_path = 4;                         // 파일 경로 (필수)
+    optional string folder_path = 5;              // 폴더 경로 (선택사항, file_path와 함께 사용시 폴더 내 파일 검색)
+    // 선택적 필터 조건
+    optional google.protobuf.Timestamp start_time = 6;  // 시작 시간
+    optional google.protobuf.Timestamp end_time = 7;    // 종료 시간
+    optional int32 max_versions = 8;              // 최대 반환 버전 수 (기본값: 50)
+    optional int32 change_count_threshold = 9;    // 변경 횟수 임계값
+    int32 group_id = 10;                          // 그룹 ID
+    optional int32 watcher_id = 11;               // 워처 ID (선택사항)
+}
+
+message GetFileHistoryResponse {
+    bool success = 1;
+    string return_message = 2;
+    repeated FileVersionInfo versions = 3;
+    int32 total_versions = 4;                     // 전체 버전 수
+    bool has_more = 5;                            // 더 많은 버전이 있는지 여부
+}
+
+// 파일 버전 정보
+message FileVersionInfo {
+    uint64 file_id = 1;
+    int64 revision = 2;
+    string filename = 3;
+    string file_path = 4;
+    string file_hash = 5;
+    google.protobuf.Timestamp created_time = 6;
+    string device_hash = 7;                       // 버전을 생성한 장치
+    int32 group_id = 8;
+    int32 watcher_id = 9;
+    uint64 file_size = 10;
+    string change_description = 11;               // 변경 설명 (선택사항)
+    bool is_deleted = 12;                         // 삭제된 버전인지 여부
+}
+
+// 파일 버전 복원 요청
+message RestoreFileVersionRequest {
+    string account_hash = 1;
+    string device_hash = 2;
+    string auth_token = 3;
+    uint64 file_id = 4;                           // 복원할 파일 ID
+    int64 target_revision = 5;                    // 복원할 버전
+    bool broadcast_to_all_devices = 6;            // 모든 장치에 브로드캐스트 여부 (기본값: true)
+    string restore_reason = 7;                    // 복원 이유 (선택사항)
+}
+
+message RestoreFileVersionResponse {
+    bool success = 1;
+    string return_message = 2;
+    int64 new_revision = 3;                       // 복원으로 생성된 새 버전
+    FileInfo restored_file_info = 4;              // 복원된 파일 정보
+    int32 notified_devices = 5;                   // 알림을 받은 장치 수
+}
+
+// 파일 복원 브로드캐스트 요청
+message BroadcastFileRestoreRequest {
+    string account_hash = 1;
+    string source_device_hash = 2;               // 복원을 요청한 장치
+    string auth_token = 3;
+    uint64 file_id = 4;
+    int64 restored_revision = 5;                  // 복원된 버전
+    int64 new_revision = 6;                       // 새로 생성된 버전
+    FileInfo file_info = 7;                       // 복원된 파일 정보
+    string restore_reason = 8;                    // 복원 이유
+}
+
+message BroadcastFileRestoreResponse {
+    bool success = 1;
+    string return_message = 2;
+    repeated string notified_device_hashes = 3;   // 알림을 받은 장치 해시 목록
+    int32 total_notified = 4;                     // 총 알림 받은 장치 수
+}
+
