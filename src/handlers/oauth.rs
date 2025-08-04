@@ -121,13 +121,15 @@ pub async fn handle_oauth_login(
     query: web::Query<OAuthLoginParams>,
     state: web::Data<Arc<AppState>>,
 ) -> ActixResult<HttpResponse> {
+    println!("🚨🚨🚨 OAUTH LOGIN HANDLER CALLED!!! 🚨🚨🚨");
+    info!("🚨🚨🚨 OAUTH LOGIN HANDLER CALLED!!! 🚨🚨🚨");
     info!("OAuth login request received");
     
-    // 🔧 디버깅: OAuth 서비스의 실제 설정값들을 로그로 출력
-    info!("🔧 OAuth 서비스 설정값 디버깅:");
-    info!("  실제 client_id: {}", state.oauth.client_id);
-    info!("  실제 auth_url: {}", state.oauth.auth_url);
-    info!("  실제 redirect_uri: {}", state.oauth.redirect_uri);
+    // 🔧 debug : OAuth service settings
+    info!("🔧 OAuth service settings:");
+    info!("  실제 client_id: {}", state.oauth.get_client_id());
+    info!("  실제 auth_url: {}", state.oauth.get_auth_url());
+    info!("  실제 redirect_uri: {}", state.oauth.get_redirect_uri());
     
     let oauth_url = match &query.device_hash {
         Some(device_hash) => {

@@ -84,13 +84,13 @@ impl OAuthService {
             .unwrap_or_else(|_| "http://localhost:8080/oauth/callback".to_string());
             
         let auth_url = std::env::var("OAUTH_AUTH_URL")
-            .unwrap_or_else(|_| "http://10.17.89.63:4000/oauth/authorize".to_string());
+            .unwrap_or_else(|_| "https://localhost:4000/oauth/authorize".to_string());
             
         let token_url = std::env::var("OAUTH_TOKEN_URL")
-            .unwrap_or_else(|_| "http://10.17.89.63:4000/oauth/token".to_string());
+            .unwrap_or_else(|_| "https://localhost:4000/oauth/token".to_string());
             
         let user_info_url = std::env::var("OAUTH_USER_INFO_URL")
-            .unwrap_or_else(|_| "http://10.17.89.63:4000/api/settings".to_string());
+            .unwrap_or_else(|_| "https://localhost:4000/userinfo".to_string());
             
         let scope = std::env::var("OAUTH_SCOPE")
             .unwrap_or_else(|_| "profile:read".to_string());
@@ -115,6 +115,19 @@ impl OAuthService {
             user_info_url,
             scope,
         }
+    }
+
+    // 디버깅을 위한 getter 메서드들 추가
+    pub fn get_client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn get_auth_url(&self) -> &str {
+        &self.auth_url
+    }
+
+    pub fn get_redirect_uri(&self) -> &str {
+        &self.redirect_uri
     }
     
     /// System76 OAuth login URL

@@ -42,7 +42,11 @@ impl Config {
         }
     }
     
-
+    /// Load configuration asynchronously with AWS Secrets Manager support
+    pub async fn load_async() -> Result<Self, Box<dyn std::error::Error>> {
+        let loader = super::secrets::ConfigLoader::new().await?;
+        Ok(loader.load_config().await)
+    }
 }
 
 /// Server configuration settings

@@ -6,7 +6,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use cosmic_sync_server::{
     server::startup::start_server,
-    config::settings::{Config, ServerConfig, DatabaseConfig, LoggingConfig, FeatureFlags, StorageConfig},
+    config::{Config, Environment, ConfigLoader},
+    config::settings::{ServerConfig, DatabaseConfig, LoggingConfig, FeatureFlags, StorageConfig},
     error::{Result, SyncError},
     storage::init_storage,
     container::ContainerBuilder,
@@ -132,45 +133,40 @@ fn init_tracing() -> Result<()> {
 async fn build_config() -> Result<Config> {
     info!("📋 Loading server configuration...");
     
-    // Optimized environment variable helpers
-    let get_env = |key: &str, default: &str| -> String {
-        env::var(key).unwrap_or_else(|_| default.to_string())
-    };
+    let environment = Environment::current();
+    info!("🔧 Detected environment: {:?} (from ENVIRONMENT variable)", environment);
     
-    let parse_env_var = |key: &str, default: u64| -> Result<u64> {
-        env::var(key)
-            .map(|v| v.parse().map_err(|_| SyncError::Config(format!("Invalid {}: {}", key, v))))
-            .unwrap_or(Ok(default))
+    // Load configuration using the new async loader with AWS Secrets Manager support
+    let config = match Config::load_async().await {
+        Ok(config) => config,
+        Err(e) => {
+            error!("❌ Failed to load configuration from AWS Secrets Manager: {}", e);
+            warn!("📋 Falling back to legacy environment variable loading");
+            Config::load()
+        }
     };
-    
-    // Load and validate database configuration
-    let database_config = DatabaseConfig::load();
     
     // Validate database connection early
-    validate_database_config(&database_config).await?;
-    
-    let server_config = ServerConfig {
-        host: get_env("SERVER_HOST", "0.0.0.0"),
-        port: parse_env_var("SERVER_PORT", 50051)? as u16,
-        storage_path: Some(database_config.url()),
-        auth_token_expiry_hours: parse_env_var("AUTH_TOKEN_EXPIRY_HOURS", 24)? as i64,
-        max_concurrent_requests: parse_env_var("MAX_CONCURRENT_REQUESTS", 1000)? as usize,
-        max_file_size: parse_env_var("MAX_FILE_SIZE", 50 * 1024 * 1024)? as usize, // 50MB
-        worker_threads: parse_env_var("WORKER_THREADS", num_cpus::get() as u64)? as usize,
-    };
+    validate_database_config(&config.database).await?;
     
     // Validate server configuration
-    validate_server_config(&server_config)?;
-    
-    let config = Config {
-        server: server_config,
-        database: database_config,
-        logging: LoggingConfig::default(),
-        features: FeatureFlags::default(),
-        storage: StorageConfig::load(),
-    };
+    validate_server_config(&config.server)?;
     
     info!("✅ Configuration validated successfully");
+    info!("🌐 gRPC server will listen on {}:{}", config.server.host, config.server.port);
+    info!("🗄️ Database: {}@{}", config.database.user, config.database.host);
+    
+    if environment.is_cloud() {
+        let secret_path = if environment == Environment::Staging { 
+            "staging/so-dod/cosmic-sync/config" 
+        } else { 
+            "production/pop-os/cosmic-sync/config" 
+        };
+        info!("☁️ Cloud environment - using secrets from: {}", secret_path);
+    } else {
+        info!("🏠 Development environment detected - using local environment variables");
+    }
+    
     Ok(config)
 }
 

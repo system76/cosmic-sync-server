@@ -1,6 +1,11 @@
 # Multi-stage build for Rust gRPC server
 FROM rust:1.75-slim as builder
 
+# Build arguments
+ARG VCS_REF
+ARG BUILD_DATE
+ARG VERSION
+
 # Install build dependencies including protobuf compiler
 RUN apt-get update && apt-get install -y \
     pkg-config \
@@ -40,6 +45,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libmysqlclient21 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app user
@@ -59,12 +65,12 @@ RUN mkdir -p /app/data && chown -R appuser:appuser /app
 # Switch to non-root user
 USER appuser
 
-# Expose gRPC port (adjust if different)
-EXPOSE 50051
+# Expose ports
+EXPOSE 50051 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ./cosmic-sync-server --health-check || exit 1
+# Health check using HTTP endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
 
 # Run the server
 CMD ["./cosmic-sync-server"]

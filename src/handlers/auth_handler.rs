@@ -20,6 +20,7 @@ use crate::auth::oauth::process_oauth_code;
 use std::collections::HashMap;
 use chrono::{Utc, Duration};
 use uuid;
+use serde_json;
 
 /// Authentication-related request handler
 pub struct AuthHandler {
@@ -717,17 +718,17 @@ pub async fn handle_register_session(
     state: web::Data<Arc<AppState>>,
     auth_handler: web::Data<AuthHandler>,
 ) -> ActixResult<HttpResponse> {
-    info!("Session registration request for device_hash: {}", request.device_hash);
+    info!("🚀 세션 등록 요청 시작 - device_hash: {}", request.device_hash);
     
     let device_hash = &request.device_hash;
     let client_id = &request.client_id;
     
-    // Create session in advance to ensure it exists when OAuth callback is received
+    // 🔧 1단계: 세션 미리 생성하여 OAuth 콜백에서 사용할 수 있도록 준비
     {
         let mut sessions = match state.auth_sessions.lock() {
             Ok(sessions) => sessions,
             Err(e) => {
-                error!("Failed to acquire session lock during registration: {}", e);
+                error!("세션 잠금 획득 실패: {}", e);
                 return Ok(HttpResponse::InternalServerError().json(crate::handlers::oauth::SessionRegistrationResponse {
                     success: false,
                     message: "Session management error".to_string(),
@@ -737,11 +738,11 @@ pub async fn handle_register_session(
             }
         };
         
-        // Check if session already exists
+        // 기존 세션 확인
         if sessions.contains_key(device_hash) {
-            info!("Session already exists for device_hash: {}", device_hash);
+            info!("기존 세션 존재: {}", device_hash);
         } else {
-            // Create new unauthenticated session
+            // 새 세션 생성 (인증되지 않은 상태)
             let now = chrono::Utc::now();
             let new_session = crate::server::app_state::AuthSession {
                 device_hash: device_hash.clone(),
@@ -754,13 +755,15 @@ pub async fn handle_register_session(
             };
             
             sessions.insert(device_hash.clone(), new_session);
-            info!("Pre-created unauthenticated session for device_hash: {}", device_hash);
+            info!("✅ 새 세션 생성 완료: {}", device_hash);
         }
     }
     
-    // Generate OAuth login URL with device_hash
+    // 🔧 2단계: OAuth 로그인 URL 생성
     let auth_url = state.oauth.generate_oauth_login_url_with_device(device_hash);
+    info!("🔗 OAuth URL 생성: {}", auth_url);
     
+    // 🔧 3단계: 성공 응답 반환
     let response = crate::handlers::oauth::SessionRegistrationResponse {
         success: true,
         message: "Session registered successfully".to_string(),
@@ -768,6 +771,6 @@ pub async fn handle_register_session(
         auth_url: Some(auth_url),
     };
     
-    info!("Session registration successful for device_hash: {}", device_hash);
+    info!("✅ 세션 등록 완료 - device_hash: {}", device_hash);
     Ok(HttpResponse::Ok().json(response))
 }

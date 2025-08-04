@@ -68,8 +68,11 @@ pub struct HealthCheckResponse {
 }
 
 /// OAuth login handler - redirects to OAuth provider
-#[get("/oauth/login")]
-pub async fn handle_oauth_login(
+/// ⚠️ This handler is moved to src/handlers/oauth.rs
+/// 이 핸들러는 src/handlers/oauth.rs로 이동되었습니다
+// #[get("/oauth/login")]
+#[allow(dead_code)]
+pub async fn handle_oauth_login_old(
     query: web::Query<OAuthLoginParams>,
     state: web::Data<Arc<AppState>>,
 ) -> impl Responder {
@@ -97,8 +100,11 @@ pub async fn handle_oauth_login(
 }
 
 /// OAuth callback handler
-#[get("/oauth/callback")]
-pub async fn handle_oauth_callback(
+/// ⚠️ This handler is moved to src/handlers/oauth.rs
+/// 이 핸들러는 src/handlers/oauth.rs로 이동되었습니다
+// #[get("/oauth/callback")]
+#[allow(dead_code)]
+pub async fn handle_oauth_callback_old(
     query: web::Query<OAuthCallback>,
     state: web::Data<Arc<AppState>>,
     auth_handler: web::Data<AuthHandler>,
@@ -301,8 +307,11 @@ pub async fn handle_oauth_callback(
 }
 
 /// Handle session registration request
-#[post("/api/auth/register_session")]
-pub async fn handle_register_session(
+// ⚠️ This handler is moved to src/handlers/auth_handler.rs
+// 이 핸들러는 src/handlers/auth_handler.rs로 이동되었습니다
+// #[post("/api/auth/register_session")]
+#[allow(dead_code)]
+pub async fn handle_register_session_old(
     request: web::Json<SessionRegistrationRequest>,
     state: web::Data<Arc<AppState>>,
     auth_handler: web::Data<AuthHandler>,
@@ -363,8 +372,11 @@ pub async fn handle_register_session(
 }
 
 /// Handle check auth status request
-#[get("/api/auth/check_auth_status")]
-pub async fn handle_check_auth_status(
+/// ⚠️ This handler is moved to src/handlers/auth_handler.rs
+/// 이 핸들러는 src/handlers/auth_handler.rs로 이동되었습니다
+// #[get("/api/auth/check_auth_status")]
+#[allow(dead_code)]
+pub async fn handle_check_auth_status_old(
     query: web::Query<CheckAuthStatusQuery>,
     auth_handler: web::Data<AuthHandler>,
 ) -> impl Responder {

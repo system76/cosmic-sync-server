@@ -38,7 +38,7 @@ pub async fn start_server(config: ServerConfig) -> Result<()> {
     // Initialize optimized app state
     let app_state = Arc::new(AppState::new_from_server_config(&config).await?);
     
-    // Start both gRPC and HTTP servers concurrently
+    // Start both gRPC and HTTP servers
     let grpc_server = start_grpc_server(&config, app_state.clone());
     let http_server = start_http_server(&config, app_state.clone());
     let shutdown_signal = setup_shutdown_signal();
@@ -190,9 +190,13 @@ async fn start_http_server(
     
     // Build HTTP server with middleware
     HttpServer::new(move || {
+        // Create AuthHandler for dependency injection
+        let auth_handler = crate::handlers::auth_handler::AuthHandler::new(app_state_clone.clone());
+        
         App::new()
             // App data
             .app_data(web::Data::new(app_state_clone.clone()))
+            .app_data(web::Data::new(auth_handler))
             
             // Middleware stack (optimized order)
             .wrap(middleware::Compress::default())
@@ -227,6 +231,9 @@ async fn start_http_server(
             // Auth endpoints
             .route("/auth/session", web::post().to(handlers::auth_handler::handle_register_session))
             .route("/auth/status", web::get().to(handlers::auth_handler::handle_check_auth_status))
+            
+            // 🔧 디버깅: 핸들러 참조 확인
+            // handlers::auth_handler::handle_register_session은 올바르게 참조되고 있습니다
             
             // API info endpoints
             .route("/api/info", web::get().to(handlers::api::api_info))
