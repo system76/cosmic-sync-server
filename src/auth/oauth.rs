@@ -5,7 +5,7 @@ use crate::{
     models::auth::AuthToken,
     models::account::Account,
     storage::Storage,
-    utils::crypto::{generate_account_hash_from_email, generate_account_hash_from_email_only, test_account_hash_generation},
+    utils::crypto::{generate_account_hash_from_email, generate_account_hash_from_email_only, test_account_hash_generation, generate_encryption_key},
 };
 use uuid::Uuid;
 use sha2::{Sha256, Digest};
@@ -555,143 +555,143 @@ pub async fn process_oauth_code(
     info!("✅ User authentication completed: user_id={}, name={}, id={}", 
          user_info.user_id, user_info.name, user_info.id);
     
-    // 2. 이메일만으로 account_hash 생성 (클라이언트와 호환성 유지)
+    // 2. 이메일 정규화
     let email = if user_info.user_id.contains('@') {
         user_info.user_id.clone()
     } else {
         format!("{}@example.com", user_info.user_id)
     };
     
-    // 클라이언트의 해시 생성 방식을 파악하기 위한 테스트
-    test_account_hash_generation(&email, &user_info.name, &user_info.user_id);
-    
-    // 두 가지 방식으로 account_hash 생성 (호환성 유지)
-    let account_hash_legacy = generate_account_hash_from_email(&user_info.user_id, &user_info.name);
-    let account_hash_email = generate_account_hash_from_email_only(&email);
-    
-    // 클라이언트가 제공한 account_hash가 있으면 우선 사용
+    // 3. account_hash 결정 로직 개선
+    // 우선순위: 1) 클라이언트 제공 해시, 2) 이메일 기반 해시
     let account_hash = if let Some(client_hash) = client_account_hash {
         info!("🔑 Using client-provided account_hash: {}", client_hash);
         client_hash.to_string()
     } else {
-        info!("🔑 No client account_hash provided, using email-based hash: {}", account_hash_email);
-        account_hash_email.clone()
+        // 이메일 기반으로 해시 생성 (가장 표준적인 방식)
+        let generated_hash = generate_account_hash_from_email_only(&email);
+        info!("🔑 Generated account_hash from email: {}", generated_hash);
+        generated_hash
     };
     
-    info!("📊 Hash comparison:");
-    info!("  Client expected: 209f313bf330cf40fe89fae938babbeba7ec95d31237f77cf19de418c0d50a0a");
-    info!("  Server legacy: {}", account_hash_legacy);
-    info!("  Server email: {}", account_hash_email);
-    info!("  Using: {}", account_hash);
+    // 4. 계정 조회 - 여러 해시 방식으로 시도
+    let mut existing_account = None;
     
-    // 3. 계정 조회 및 생성/업데이트
-    let account_obj = match oauth_service.storage.get_account_by_hash(&account_hash).await {
+    // 먼저 결정된 account_hash로 조회
+    match oauth_service.storage.get_account_by_hash(&account_hash).await {
         Ok(Some(account)) => {
-            info!("🔄 Existing account found with hash: account_hash={}", account_hash);
-            // Update last login time
-            let mut updated_account = account.clone();
-            updated_account.last_login = Utc::now();
-            if let Err(e) = oauth_service.storage.update_account(&updated_account).await {
-                error!("Error updating account last login: {}", e);
-            }
-            updated_account
+            info!("✅ Account found with primary hash: {}", account_hash);
+            existing_account = Some(account);
         },
         Ok(None) => {
-            // 이메일 기반 해시로 계정 조회 시도
-            match oauth_service.storage.get_account_by_hash(&account_hash_email).await {
-                Ok(Some(email_account)) => {
-                    info!("🔄 Existing account found with email hash, updating to client hash");
-                    
-                    // 클라이언트 해시로 계정 업데이트
-                    let mut updated_account = email_account.clone();
-                    updated_account.account_hash = account_hash.clone();
-                    updated_account.last_login = Utc::now();
-                    
-                    // 계정 업데이트
-                    if let Err(e) = oauth_service.storage.update_account(&updated_account).await {
-                        error!("Error updating account hash: {}", e);
-                    } else {
-                        info!("✅ Successfully updated account from email hash to client hash");
-                    }
-                    
-                    updated_account
+            // 이메일로 계정 조회 시도
+            match oauth_service.storage.get_account_by_email(&email).await {
+                Ok(Some(account)) => {
+                    info!("✅ Account found by email: {}", email);
+                    existing_account = Some(account);
                 },
-                _ => {
-                    // 레거시 해시로 계정 조회 시도
-                    match oauth_service.storage.get_account_by_hash(&account_hash_legacy).await {
-                        Ok(Some(legacy_account)) => {
-                            info!("🔄 Existing account found with legacy hash, updating to client hash");
-                            
-                            // 클라이언트 해시로 계정 업데이트
-                            let mut updated_account = legacy_account.clone();
-                            updated_account.account_hash = account_hash.clone();
-                            updated_account.last_login = Utc::now();
-                            
-                            // 계정 업데이트
-                            if let Err(e) = oauth_service.storage.update_account(&updated_account).await {
-                                error!("Error updating account hash: {}", e);
-                            } else {
-                                info!("✅ Successfully updated account from legacy hash to client hash");
-                            }
-                            
-                            updated_account
-                        },
-                        _ => {
-                            info!("✨ Creating new account: account_hash={}, email={}", account_hash, email);
-                            // Create new account if not exists
-                            let now = Utc::now();
-                            
-                            let new_account = Account {
-                                account_hash: account_hash.clone(),
-                                user_id: user_info.user_id.clone(),
-                                name: user_info.name.clone(),
-                                email,
-                                id: Uuid::new_v4().to_string(),
-                                user_type: "oauth".to_string(),
-                                password_hash: String::new(),
-                                salt: String::new(),
-                                is_active: true,
-                                created_at: now,
-                                updated_at: now,
-                                last_login: now,
-                            };
-                            
-                            // Save account
-                            match oauth_service.storage.create_account(&new_account).await {
-                                Ok(_) => {
-                                    info!("✅ New account created successfully: account_hash={}", account_hash);
-                                    
-                                    // 계정 생성 확인
-                                    match oauth_service.storage.get_account_by_hash(&account_hash).await {
-                                        Ok(Some(_)) => {
-                                            info!("✅ Verified account was saved to database: account_hash={}", account_hash);
-                                        },
-                                        Ok(None) => {
-                                            error!("❌ Account creation verification failed: account not found in database after creation");
-                                        },
-                                        Err(e) => {
-                                            error!("❌ Error verifying account creation: {}", e);
-                                        }
-                                    }
-                                },
-                                Err(e) => {
-                                    error!("❌ Failed to create account: {}", e);
-                                }
-                            }
-                            
-                            new_account
-                        }
-                    }
+                Ok(None) => {
+                    info!("ℹ️ No existing account found for email: {}", email);
+                },
+                Err(e) => {
+                    error!("❌ Error checking account by email: {}", e);
                 }
             }
         },
         Err(e) => {
-            error!("Error getting account: {}", e);
-            return Err(AuthError::DatabaseError(e.to_string()));
+            error!("❌ Error checking account by hash: {}", e);
         }
+    }
+    
+    // 5. 계정 생성 또는 업데이트
+    let account_obj = if let Some(mut account) = existing_account {
+        // 기존 계정이 있는 경우
+        info!("🔄 Updating existing account: {}", account.account_hash);
+        
+        // account_hash가 다른 경우 업데이트
+        if account.account_hash != account_hash {
+            info!("🔄 Updating account_hash from {} to {}", account.account_hash, account_hash);
+            account.account_hash = account_hash.clone();
+        }
+        
+        // 마지막 로그인 시간 업데이트
+        account.last_login = Utc::now();
+        account.updated_at = Utc::now();
+        
+        // 계정 업데이트
+        if let Err(e) = oauth_service.storage.update_account(&account).await {
+            error!("❌ Error updating account: {}", e);
+            // 업데이트 실패해도 계속 진행 (인증은 성공했으므로)
+        } else {
+            info!("✅ Account updated successfully");
+        }
+        
+        account
+    } else {
+        // 새 계정 생성
+        info!("✨ Creating new account: account_hash={}, email={}", account_hash, email);
+        
+        let now = Utc::now();
+        let new_account = Account {
+            account_hash: account_hash.clone(),
+            user_id: user_info.user_id.clone(),
+            name: user_info.name.clone(),
+            email: email.clone(),
+            id: Uuid::new_v4().to_string(),
+            user_type: "oauth".to_string(),
+            password_hash: String::new(),
+            salt: String::new(),
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+            last_login: now,
+        };
+        
+        // 계정 저장 - 재시도 로직 포함
+        let mut retry_count = 0;
+        let max_retries = 3;
+        
+        while retry_count < max_retries {
+            match oauth_service.storage.create_account(&new_account).await {
+                Ok(_) => {
+                    info!("✅ New account created successfully: account_hash={}", account_hash);
+                    
+                    // 계정 생성 확인
+                    match oauth_service.storage.get_account_by_hash(&account_hash).await {
+                        Ok(Some(_)) => {
+                            info!("✅ Account creation verified in database");
+                        },
+                        Ok(None) => {
+                            error!("⚠️ Account not found after creation - may be a database sync issue");
+                        },
+                        Err(e) => {
+                            error!("⚠️ Error verifying account creation: {}", e);
+                        }
+                    }
+                    break;
+                },
+                Err(e) => {
+                    error!("❌ Failed to create account (attempt {}/{}): {}", retry_count + 1, max_retries, e);
+                    
+                    // Duplicate entry 에러인 경우 재시도하지 않음
+                    if e.to_string().contains("Duplicate") {
+                        info!("ℹ️ Account may already exist, proceeding anyway");
+                        break;
+                    }
+                    
+                    retry_count += 1;
+                    if retry_count < max_retries {
+                        // 짧은 대기 후 재시도
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        }
+        
+        new_account
     };
     
-    // 4. generate auth token
+    // 6. generate auth token
     let auth_token = generate_auth_token();
     
     // Create and save auth token
@@ -707,21 +707,45 @@ pub async fn process_oauth_code(
         scope: None,
     };
     
-    // Save auth token
-    if let Err(e) = oauth_service.storage.create_auth_token(&token_obj).await {
-        error!("Error saving auth token: {}", e);
-        return Err(AuthError::DatabaseError(format!("Error saving auth token: {}", e)));
+    // Save auth token with retry
+    let mut retry_count = 0;
+    let max_retries = 3;
+    
+    while retry_count < max_retries {
+        match oauth_service.storage.create_auth_token(&token_obj).await {
+            Ok(_) => {
+                info!("✅ Auth token saved successfully");
+                break;
+            },
+            Err(e) => {
+                error!("❌ Error saving auth token (attempt {}/{}): {}", retry_count + 1, max_retries, e);
+                retry_count += 1;
+                if retry_count < max_retries {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                } else {
+                    return Err(AuthError::DatabaseError(format!("Failed to save auth token after {} attempts", max_retries)));
+                }
+            }
+        }
     }
     
-    // 5. generate or get user's encryption key
+    // 7. generate or get user's encryption key
     let encryption_key = match get_encryption_key(&account_hash, oauth_service.storage.clone()).await {
         Ok(Some(key)) => key,
-        Ok(None) => String::new(),
+        Ok(None) => {
+            info!("⚠️ No encryption key found, generating new one");
+            generate_encryption_key()
+        },
         Err(e) => {
-            error!("Failed to get encryption key: {}", e);
-            String::new()
+            error!("⚠️ Failed to get encryption key: {}, generating new one", e);
+            generate_encryption_key()
         }
     };
+    
+    info!("✅ OAuth process completed successfully");
+    info!("  Auth token: {}...", &auth_token[..10.min(auth_token.len())]);
+    info!("  Account hash: {}", account_hash);
+    info!("  Encryption key: {}...", &encryption_key[..10.min(encryption_key.len())]);
     
     Ok((auth_token, account_hash, encryption_key))
 }

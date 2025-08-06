@@ -157,7 +157,7 @@ pub async fn handle_oauth_callback(
     query: web::Query<OAuthCallback>,
     state: web::Data<Arc<AppState>>,
     auth_handler: web::Data<AuthHandler>,
-    req: HttpRequest, // 요청 객체 추가
+    req: HttpRequest,
 ) -> ActixResult<HttpResponse> {
     // check for error
     if let Some(error) = &query.error {
@@ -168,52 +168,49 @@ pub async fn handle_oauth_callback(
         )));
     }
     
-    // Get session ID from state parameter
+    // Get device_hash from state parameter (CSRF token)
     let device_hash = match &query.state {
         Some(token) => {
             info!("OAuth callback received with state/device_hash: {}", token);
             token.clone()
         },
         None => {
-            // Generate a temporary session ID if missing
-            warn!("OAuth callback without state token/device_hash - generating temporary device_hash");
+            warn!("OAuth callback without state token - generating temporary device_hash");
             let temp_device_hash = format!("temp_{}", chrono::Utc::now().timestamp());
             info!("Generated temporary device_hash: {}", temp_device_hash);
             temp_device_hash
         }
     };
     
-    // log authentication code
     info!("Received OAuth callback with code: {} and device_hash: {}", query.code, device_hash);
     
-    // 클라이언트가 제공한 account_hash 확인
-    let client_account_hash = req.headers()
-        .get("X-Client-Account-Hash")
-        .and_then(|v| v.to_str().ok());
-    
-    // 모든 헤더 로깅 (디버깅용)
-    info!("📋 Request headers:");
-    for (name, value) in req.headers().iter() {
-        if let Ok(value_str) = value.to_str() {
-            info!("   {}: {}", name, value_str);
-        }
-    }
-    
-    if let Some(hash) = client_account_hash {
-        info!("✅ Client provided account_hash in header: {}", hash);
-    } else {
-        warn!("⚠️ No X-Client-Account-Hash header found in request");
+    // 클라이언트 account_hash 추출 - 여러 방법 시도
+    let client_account_hash = {
+        // 1. 헤더에서 확인
+        let from_header = req.headers()
+            .get("X-Client-Account-Hash")
+            .or_else(|| req.headers().get("X-Account-Hash"))
+            .or_else(|| req.headers().get("Account-Hash"))
+            .and_then(|v| v.to_str().ok());
         
-        // 다른 가능한 헤더 이름 확인
-        for (name, value) in req.headers().iter() {
-            if name.as_str().to_lowercase().contains("account") || 
-               name.as_str().to_lowercase().contains("hash") {
-                if let Ok(value_str) = value.to_str() {
-                    info!("   Potential account hash header: {}: {}", name, value_str);
+        if let Some(hash) = from_header {
+            info!("✅ Client account_hash from header: {}", hash);
+            Some(hash.to_string())
+        } else {
+            // 2. 쿼리 파라미터에서 확인 (state에 포함되어 있을 수 있음)
+            if let Some(state) = &query.state {
+                // state가 account_hash일 수도 있음 (64자 16진수 문자열인지 확인)
+                if state.len() == 64 && state.chars().all(|c| c.is_ascii_hexdigit()) {
+                    info!("✅ Client account_hash from state parameter: {}", state);
+                    Some(state.clone())
+                } else {
+                    None
                 }
+            } else {
+                None
             }
         }
-    }
+    };
     
     // Check if session exists before OAuth processing
     let session_exists_before = {
@@ -239,17 +236,16 @@ pub async fn handle_oauth_callback(
         }
     };
 
-    // get OAuth service
+    // OAuth 처리
     let oauth = Arc::new(state.oauth.clone());
     
-    // process OAuth code
     match process_oauth_code(
         &query.code, 
         oauth,
-        client_account_hash
+        client_account_hash.as_deref()
     ).await {
         Ok((auth_token, account_hash, encryption_key)) => {
-            info!("OAuth authentication successful for account: {}", account_hash);
+            info!("✅ OAuth authentication successful for account: {}", account_hash);
             
             // 모든 세션 리스트 가져오기 (디버깅용)
             let sessions = {
@@ -311,44 +307,129 @@ pub async fn handle_oauth_callback(
                 }
             }
             
-            // 세션 데이터를 JSON 형식으로 표시 - 클라이언트가 스크립트로 가져갈 수 있게 함
-            let auth_data_json = format!(
-                r#"{{
-                    "auth_token": "{}",
-                    "account_hash": "{}",
-                    "encryption_key": "{}",
-                    "device_hash": "{}"
-                }}"#,
-                auth_token, account_hash, encryption_key, device_hash
-            );
-            
-            // login successful HTML response
+            // 인증 데이터를 JSON으로 포함한 성공 페이지 반환
             let html_response = format!(
-                r#"
+                r#"<!DOCTYPE html>
                 <html>
                 <head>
                     <title>Authentication Successful</title>
+                    <meta charset="utf-8">
                     <style>
-                        body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
-                        .success {{ color: green; font-size: 24px; margin-bottom: 20px; }}
-                        .data {{ background-color: #f5f5f5; border-radius: 5px; padding: 10px; display: inline-block; text-align: left; }}
+                        body {{ 
+                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            min-height: 100vh;
+                            margin: 0;
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        }}
+                        .container {{
+                            background: white;
+                            padding: 40px;
+                            border-radius: 12px;
+                            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                            text-align: center;
+                            max-width: 400px;
+                        }}
+                        .success-icon {{
+                            width: 80px;
+                            height: 80px;
+                            margin: 0 auto 20px;
+                            background: #4CAF50;
+                            border-radius: 50%;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }}
+                        .checkmark {{
+                            color: white;
+                            font-size: 48px;
+                        }}
+                        h1 {{
+                            color: #333;
+                            margin-bottom: 10px;
+                        }}
+                        p {{
+                            color: #666;
+                            line-height: 1.6;
+                        }}
+                        .auth-data {{
+                            background: #f5f5f5;
+                            padding: 15px;
+                            border-radius: 8px;
+                            margin-top: 20px;
+                            font-family: monospace;
+                            font-size: 12px;
+                            word-break: break-all;
+                            text-align: left;
+                        }}
+                        .close-btn {{
+                            margin-top: 20px;
+                            padding: 10px 20px;
+                            background: #667eea;
+                            color: white;
+                            border: none;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 16px;
+                        }}
+                        .close-btn:hover {{
+                            background: #5a67d8;
+                        }}
                     </style>
                 </head>
                 <body>
-                    <div class="success">Authentication Successful!</div>
-                    <p>You can now close this window and return to the application.</p>
-                    <p>Your authentication has been automatically processed.</p>
-                    <script>
-                        // This data can be used by any scripts that need it
-                        const authData = {auth_data_json};
-                        console.log('Auth data:', authData);
+                    <div class="container">
+                        <div class="success-icon">
+                            <div class="checkmark">✓</div>
+                        </div>
+                        <h1>Authentication Successful!</h1>
+                        <p>Your account has been successfully authenticated. You can now close this window and return to the application.</p>
                         
-                        // You can add a postMessage here if needed to communicate with the opener window
-                        // window.opener && window.opener.postMessage({{ type: 'auth-success', data: authData }}, '*');
+                        <div class="auth-data">
+                            <strong>Debug Information:</strong><br>
+                            Account Hash: {}<br>
+                            Token: {}...<br>
+                            Device Hash: {}
+                        </div>
+                        
+                        <button class="close-btn" onclick="window.close()">Close Window</button>
+                    </div>
+                    
+                    <script>
+                        // Store auth data for potential use by the application
+                        const authData = {{
+                            "auth_token": "{}",
+                            "account_hash": "{}",
+                            "encryption_key": "{}",
+                            "device_hash": "{}"
+                        }};
+                        
+                        console.log('Authentication successful:', authData);
+                        
+                        // Try to communicate with parent window if opened as popup
+                        if (window.opener && !window.opener.closed) {{
+                            window.opener.postMessage({{
+                                type: 'oauth-success',
+                                data: authData
+                            }}, '*');
+                        }}
+                        
+                        // Auto-close after 5 seconds
+                        setTimeout(() => {{
+                            window.close();
+                        }}, 5000);
                     </script>
                 </body>
-                </html>
-                "#
+                </html>"#,
+                account_hash,
+                &auth_token[..20.min(auth_token.len())],
+                device_hash,
+                auth_token,
+                account_hash,
+                encryption_key,
+                device_hash
             );
             
             Ok(HttpResponse::Ok()
@@ -356,26 +437,106 @@ pub async fn handle_oauth_callback(
                 .body(html_response))
         },
         Err(e) => {
-            error!("OAuth authentication failed: {}", e);
+            error!("❌ OAuth authentication failed: {}", e);
             
             // Error HTML response
             let html_response = format!(
-                r#"
+                r#"<!DOCTYPE html>
                 <html>
                 <head>
                     <title>Authentication Failed</title>
+                    <meta charset="utf-8">
                     <style>
-                        body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
-                        .error {{ color: red; font-size: 24px; margin-bottom: 20px; }}
+                        body {{ 
+                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            min-height: 100vh;
+                            margin: 0;
+                            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                        }}
+                        .container {{
+                            background: white;
+                            padding: 40px;
+                            border-radius: 12px;
+                            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                            text-align: center;
+                            max-width: 400px;
+                        }}
+                        .error-icon {{
+                            width: 80px;
+                            height: 80px;
+                            margin: 0 auto 20px;
+                            background: #f44336;
+                            border-radius: 50%;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }}
+                        .error-mark {{
+                            color: white;
+                            font-size: 48px;
+                        }}
+                        h1 {{
+                            color: #333;
+                            margin-bottom: 10px;
+                        }}
+                        p {{
+                            color: #666;
+                            line-height: 1.6;
+                        }}
+                        .error-details {{
+                            background: #fff3e0;
+                            padding: 15px;
+                            border-radius: 8px;
+                            margin-top: 20px;
+                            border-left: 4px solid #ff9800;
+                            text-align: left;
+                        }}
+                        .retry-btn {{
+                            margin-top: 20px;
+                            padding: 10px 20px;
+                            background: #f5576c;
+                            color: white;
+                            border: none;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 16px;
+                        }}
+                        .retry-btn:hover {{
+                            background: #e04865;
+                        }}
                     </style>
                 </head>
                 <body>
-                    <div class="error">Authentication Failed</div>
-                    <p>Error: {}</p>
-                    <p>Please close this window and try again.</p>
+                    <div class="container">
+                        <div class="error-icon">
+                            <div class="error-mark">✕</div>
+                        </div>
+                        <h1>Authentication Failed</h1>
+                        <p>We couldn't complete the authentication process.</p>
+                        
+                        <div class="error-details">
+                            <strong>Error Details:</strong><br>
+                            {}
+                        </div>
+                        
+                        <button class="retry-btn" onclick="window.location.href='/oauth/login'">Try Again</button>
+                    </div>
+                    
+                    <script>
+                        // Notify parent window of failure
+                        if (window.opener && !window.opener.closed) {{
+                            window.opener.postMessage({{
+                                type: 'oauth-error',
+                                error: '{}'
+                            }}, '*');
+                        }}
+                    </script>
                 </body>
-                </html>
-                "#,
+                </html>"#,
+                e,
                 e
             );
             
