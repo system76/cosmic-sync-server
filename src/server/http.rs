@@ -166,7 +166,8 @@ pub async fn handle_oauth_callback_old(
     // process OAuth code
     match process_oauth_code(
         &query.code, 
-        oauth
+        oauth,
+        None // 클라이언트 account_hash 없음
     ).await {
         Ok((auth_token, account_hash, encryption_key)) => {
             info!("OAuth authentication successful for account: {}", account_hash);

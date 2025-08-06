@@ -21,19 +21,27 @@ pub mod cache;
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
+use std::path::PathBuf;
+use std::fs;
+use std::io;
 use tracing::{debug, info, warn, error, instrument};
 use thiserror::Error;
+use mysql_async::Opts;
+use mysql_async::prelude::Queryable;
 
 use crate::{
     models::{
         Account, Device, FileInfo, AuthToken, 
         WatcherGroup, WatcherPreset, WatcherCondition,
-        FileEntry, file::FileNotice
+        FileEntry, file::FileNotice, 
+        watcher::Watcher,
     },
     sync::{DeviceInfo, WatcherData, WatcherGroupData},
     config::settings::{DatabaseConfig, StorageConfig, StorageType},
     error::{SyncError, Result as AppResult},
 };
+
+use self::mysql::MySqlStorage;
 
 /// Storage Result type for backward compatibility
 pub type Result<T> = std::result::Result<T, StorageError>;
@@ -358,21 +366,52 @@ pub trait Storage: Sync + Send {
 pub struct StorageFactory;
 
 impl StorageFactory {
-    /// Create MySQL storage with optimized connection pool
+    /// Create MySQL storage
     #[instrument(skip(config))]
-    pub async fn create_mysql_storage(config: &DatabaseConfig) -> AppResult<mysql::MySqlStorage> {
+    pub async fn create_mysql_storage(config: &DatabaseConfig) -> AppResult<impl Storage> {
         info!("Creating optimized MySQL storage");
         
-        // Create storage using connection URL (MySqlStorage handles internal pooling)
-        let storage = mysql::MySqlStorage::new(
-            &config.user, 
-            &config.password, 
-            &config.host, 
-            config.port, 
-            &config.name
-        )?;
+        let host = config.host.clone();
+        let port = config.port;
+        let user = config.user.clone();
+        let password = config.password.clone();
+        let database = config.name.clone();
+        
+        // 연결 URL 생성 (secure_auth=false로 SSL 비활성화)
+        let connection_url = format!("mysql://{}:{}@{}:{}/{}?secure_auth=false", user, password, host, port, database);
+        
+        // Opts 생성
+        let opts = Opts::from_url(&connection_url)
+            .map_err(|e| SyncError::Storage(format!("Failed to parse MySQL connection URL: {}", e)))?;
+        
+        info!("MySQL connection options: {:?}", opts);
+        
+        // MySqlStorage 생성
+        let storage = MySqlStorage::new(opts)
+            .map_err(|e| SyncError::Storage(format!("Failed to create MySQL storage: {}", e)))?;
+        
+        // 스키마 초기화 명시적 호출
+        match storage.init_schema().await {
+            Ok(_) => info!("✅ Database schema initialized successfully"),
+            Err(e) => {
+                error!("❌ Failed to initialize database schema: {}", e);
+                // 스키마 초기화 실패는 경고만 하고 계속 진행
+            }
+        }
+        
+        // 트랜잭션 자동 커밋 설정 확인
+        let pool = storage.get_pool();
+        let mut conn = pool.get_conn().await
+            .map_err(|e| SyncError::Storage(format!("Failed to get connection: {}", e)))?;
+            
+        match conn.query_first::<String, _>("SELECT @@autocommit").await {
+            Ok(Some(value)) => info!("✅ MySQL autocommit setting: {}", value),
+            Ok(None) => warn!("⚠️ Could not determine autocommit setting"),
+            Err(e) => warn!("⚠️ Failed to check autocommit setting: {}", e),
+        }
         
         info!("✅ MySQL storage created successfully");
+        
         Ok(storage)
     }
     
@@ -389,6 +428,8 @@ pub async fn init_storage(config: &DatabaseConfig) -> AppResult<Arc<dyn Storage>
     info!("Initializing optimized storage layer");
     
     let storage = StorageFactory::create_mysql_storage(config).await?;
+    
+    // 스키마 초기화는 create_mysql_storage에서 이미 수행됨
     
     // Validate storage health
     storage.health_check().await

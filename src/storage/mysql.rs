@@ -34,17 +34,19 @@ impl MySqlStorage {
         })
     }
     
-    /// Create a new MySQL storage
-    pub fn new(user: &str, password: &str, host: &str, port: u16, database: &str) -> Result<Self> {
-        let connection_url = format!("mysql://{}:{}@{}:{}/{}", user, password, host, port, database);
+    /// Create a new MySQL storage instance
+    pub fn new(opts: Opts) -> Result<Self> {
+        info!("Creating MySQL storage with options: {:?}", opts);
         
-        let opts = Opts::from_url(&connection_url)
-            .map_err(|e| StorageError::General(format!("Failed to parse MySQL connection URL: {}", e)))?;
-        
-        // Pool 생성
         let pool = Pool::new(opts);
         
-        Ok(Self { pool })
+        let storage = Self { pool };
+        
+        // 비동기 함수를 동기적으로 호출하는 부분 제거
+        // 스키마 초기화는 별도로 처리
+        info!("MySQL storage created successfully");
+        
+        Ok(storage)
     }
     
     /// Check database connection
@@ -68,6 +70,8 @@ impl MySqlStorage {
         let mut conn = self.pool.get_conn().await
             .map_err(|e| StorageError::Database(format!("Failed to connect to database: {}", e)))?;
             
+        info!("🔄 Initializing database schema...");
+            
         // Create accounts table
         let create_accounts_table = r"
         CREATE TABLE IF NOT EXISTS accounts (
@@ -85,6 +89,26 @@ impl MySqlStorage {
         
         conn.query_drop(create_accounts_table).await
             .map_err(|e| StorageError::Database(format!("Failed to create accounts table: {}", e)))?;
+            
+        info!("✅ accounts 테이블 생성 확인");
+            
+        // Create auth_tokens table
+        let create_auth_tokens_table = r"
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+            id VARCHAR(36) NOT NULL,
+            token VARCHAR(255) NOT NULL PRIMARY KEY,
+            account_hash VARCHAR(255) NOT NULL,
+            created_at BIGINT NOT NULL,
+            expires_at BIGINT NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            INDEX (account_hash),
+            FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
+        )";
+        
+        conn.query_drop(create_auth_tokens_table).await
+            .map_err(|e| StorageError::Database(format!("Failed to create auth_tokens table: {}", e)))?;
+            
+        info!("✅ auth_tokens 테이블 생성 확인");
             
         // Create devices table
         let create_devices_table = r"
@@ -108,6 +132,8 @@ impl MySqlStorage {
         conn.query_drop(create_devices_table).await
             .map_err(|e| StorageError::Database(format!("Failed to create devices table: {}", e)))?;
             
+        info!("✅ devices 테이블 생성 확인");
+            
         // Create files table
         let create_files_table = r"
         CREATE TABLE IF NOT EXISTS files (
@@ -122,127 +148,28 @@ impl MySqlStorage {
             is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
             is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
             revision BIGINT NOT NULL DEFAULT 1,
-            created_time BIGINT NOT NULL,
-            updated_time BIGINT NOT NULL,
+            modified_time BIGINT NOT NULL,
+            upload_time BIGINT NOT NULL,
             group_id INT NOT NULL DEFAULT 0,
             watcher_id INT NOT NULL DEFAULT 0,
-            operation_type VARCHAR(20) NOT NULL DEFAULT 'UPLOAD',
             INDEX (account_hash),
             INDEX (file_id),
-            INDEX (group_id),
-            UNIQUE INDEX (file_id, group_id),
+            INDEX (file_hash),
+            INDEX (account_hash, group_id),
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
         )";
         
         conn.query_drop(create_files_table).await
             .map_err(|e| StorageError::Database(format!("Failed to create files table: {}", e)))?;
             
-        // Create file_data table
-        let create_file_data_table = r"
-        CREATE TABLE IF NOT EXISTS file_data (
-            file_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-            data LONGBLOB NOT NULL,
-            created_at BIGINT NOT NULL,
-            updated_at BIGINT NOT NULL,
-            FOREIGN KEY (file_id) REFERENCES files(file_id) ON DELETE CASCADE
-        )";
+        info!("✅ files 테이블 생성 확인");
         
-        conn.query_drop(create_file_data_table).await
-            .map_err(|e| StorageError::Database(format!("Failed to create file_data table: {}", e)))?;
-            
-        // Create auth_tokens table
-        let create_auth_tokens_table = r"
-        CREATE TABLE IF NOT EXISTS auth_tokens (
-            id VARCHAR(36) NOT NULL PRIMARY KEY,
-            account_hash VARCHAR(255) NOT NULL,
-            access_token VARCHAR(1024) NOT NULL,
-            refresh_token VARCHAR(1024),
-            token_type VARCHAR(20) NOT NULL,
-            expires_at BIGINT NOT NULL,
-            created_at BIGINT NOT NULL,
-            INDEX (access_token(255)),
-            INDEX (account_hash),
-            FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
-        )";
-        
-        conn.query_drop(create_auth_tokens_table).await
-            .map_err(|e| StorageError::Database(format!("Failed to create auth_tokens table: {}", e)))?;
-            
-        // Create watcher_groups table
-        let create_watcher_groups_table = r"
-        CREATE TABLE IF NOT EXISTS watcher_groups (
-            id INT NOT NULL PRIMARY KEY,
-            account_hash VARCHAR(255) NOT NULL,
-            device_hash VARCHAR(255) NOT NULL,
-            title VARCHAR(255) NOT NULL,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL,
-            registered_at DATETIME,
-            next_attempt_at DATETIME,
-            is_active BOOLEAN NOT NULL DEFAULT TRUE,
-            INDEX (account_hash),
-            FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
-        )";
-        
-        conn.query_drop(create_watcher_groups_table).await
-            .map_err(|e| StorageError::Database(format!("Failed to create watcher_groups table: {}", e)))?;
-            
-        // Create watcher_presets table
-        let create_watcher_presets_table = r"
-        CREATE TABLE IF NOT EXISTS watcher_presets (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            account_hash VARCHAR(255) NOT NULL,
-            preset_json TEXT NOT NULL,
-            created_at BIGINT NOT NULL,
-            updated_at BIGINT NOT NULL,
-            INDEX (account_hash),
-            FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
-        )";
-        
-        conn.query_drop(create_watcher_presets_table).await
-            .map_err(|e| StorageError::Database(format!("Failed to create watcher_presets table: {}", e)))?;
-            
-        // Create watchers table
-        let create_watchers_table = r"
-        CREATE TABLE IF NOT EXISTS watchers (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            account_hash VARCHAR(255) NOT NULL,
-            group_id INT NOT NULL,
-            folder VARCHAR(1024) NOT NULL,
-            pattern VARCHAR(255),
-            interval_seconds INT NOT NULL DEFAULT 60,
-            is_recursive BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at BIGINT NOT NULL,
-            updated_at BIGINT NOT NULL,
-            is_active BOOLEAN NOT NULL DEFAULT TRUE COMMENT 'Whether the watcher is active',
-            extra_json TEXT COMMENT 'Additional JSON data for watcher configuration',
-            INDEX (group_id),
-            INDEX (account_hash),
-            FOREIGN KEY (group_id) REFERENCES watcher_groups(id) ON DELETE CASCADE,
-            FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
-        )";
-        
-        conn.query_drop(create_watchers_table).await
-            .map_err(|e| StorageError::Database(format!("Failed to create watchers table: {}", e)))?;
-            
-        // Create group_watchers table
-        let create_group_watchers_table = r"
-        CREATE TABLE IF NOT EXISTS group_watchers (
-            group_id INT NOT NULL,
-            watcher_id INT NOT NULL,
-            PRIMARY KEY (group_id, watcher_id),
-            FOREIGN KEY (group_id) REFERENCES watcher_groups(id) ON DELETE CASCADE,
-            FOREIGN KEY (watcher_id) REFERENCES watchers(id) ON DELETE CASCADE
-        )";
-        
-        conn.query_drop(create_group_watchers_table).await
-            .map_err(|e| StorageError::Database(format!("Failed to create group_watchers table: {}", e)))?;
-            
         // Create encryption_keys table
         let create_encryption_keys_table = r"
         CREATE TABLE IF NOT EXISTS encryption_keys (
-            account_hash VARCHAR(255) NOT NULL PRIMARY KEY,
-            encryption_key TEXT NOT NULL,
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            account_hash VARCHAR(255) NOT NULL UNIQUE,
+            encryption_key VARCHAR(255) NOT NULL,
             created_at BIGINT NOT NULL,
             updated_at BIGINT NOT NULL,
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
@@ -251,29 +178,10 @@ impl MySqlStorage {
         conn.query_drop(create_encryption_keys_table).await
             .map_err(|e| StorageError::Database(format!("Failed to create encryption_keys table: {}", e)))?;
             
-        // Create watcher_conditions table
-        let create_watcher_conditions_table = r"
-        CREATE TABLE IF NOT EXISTS watcher_conditions (
-            id BIGINT AUTO_INCREMENT PRIMARY KEY,
-            account_hash VARCHAR(255) NOT NULL,
-            watcher_id INT NOT NULL,
-            condition_type ENUM('union', 'subtract') NOT NULL,
-            `key` VARCHAR(255) NOT NULL,
-            value JSON NOT NULL,
-            operator VARCHAR(50) NOT NULL DEFAULT 'equals',
-            created_at BIGINT NOT NULL,
-            updated_at BIGINT NOT NULL,
-            INDEX (account_hash),
-            INDEX (watcher_id),
-            INDEX (account_hash, watcher_id),
-            FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE,
-            FOREIGN KEY (watcher_id) REFERENCES watchers(id) ON DELETE CASCADE
-        )";
+        info!("✅ encryption_keys 테이블 생성 확인");
         
-        conn.query_drop(create_watcher_conditions_table).await
-            .map_err(|e| StorageError::Database(format!("Failed to create watcher_conditions table: {}", e)))?;
+        info!("✅ 데이터베이스 스키마 초기화 완료");
         
-        info!("데이터베이스 스키마 초기화 완료");
         Ok(())
     }
     

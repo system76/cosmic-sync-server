@@ -29,6 +29,18 @@ pub enum AuthError {
     #[error("External service error: {0}")]
     ExternalServiceError(String),
     
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
+    
+    #[error("User not found: {0}")]
+    UserNotFound(String),
+    
+    #[error("Missing user data: {0}")]
+    MissingUserData(String),
+    
+    #[error("Invalid response format: {0}")]
+    InvalidResponseFormat(String),
+    
     #[error("Unknown error: {0}")]
     Unknown(String),
 }

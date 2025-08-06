@@ -157,6 +157,7 @@ pub async fn handle_oauth_callback(
     query: web::Query<OAuthCallback>,
     state: web::Data<Arc<AppState>>,
     auth_handler: web::Data<AuthHandler>,
+    req: HttpRequest, // 요청 객체 추가
 ) -> ActixResult<HttpResponse> {
     // check for error
     if let Some(error) = &query.error {
@@ -184,6 +185,35 @@ pub async fn handle_oauth_callback(
     
     // log authentication code
     info!("Received OAuth callback with code: {} and device_hash: {}", query.code, device_hash);
+    
+    // 클라이언트가 제공한 account_hash 확인
+    let client_account_hash = req.headers()
+        .get("X-Client-Account-Hash")
+        .and_then(|v| v.to_str().ok());
+    
+    // 모든 헤더 로깅 (디버깅용)
+    info!("📋 Request headers:");
+    for (name, value) in req.headers().iter() {
+        if let Ok(value_str) = value.to_str() {
+            info!("   {}: {}", name, value_str);
+        }
+    }
+    
+    if let Some(hash) = client_account_hash {
+        info!("✅ Client provided account_hash in header: {}", hash);
+    } else {
+        warn!("⚠️ No X-Client-Account-Hash header found in request");
+        
+        // 다른 가능한 헤더 이름 확인
+        for (name, value) in req.headers().iter() {
+            if name.as_str().to_lowercase().contains("account") || 
+               name.as_str().to_lowercase().contains("hash") {
+                if let Ok(value_str) = value.to_str() {
+                    info!("   Potential account hash header: {}: {}", name, value_str);
+                }
+            }
+        }
+    }
     
     // Check if session exists before OAuth processing
     let session_exists_before = {
@@ -215,7 +245,8 @@ pub async fn handle_oauth_callback(
     // process OAuth code
     match process_oauth_code(
         &query.code, 
-        oauth
+        oauth,
+        client_account_hash
     ).await {
         Ok((auth_token, account_hash, encryption_key)) => {
             info!("OAuth authentication successful for account: {}", account_hash);

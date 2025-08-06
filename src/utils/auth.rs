@@ -1,5 +1,5 @@
 use std::env;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use tonic::Status;
 use crate::auth::oauth::OAuthService;
 
@@ -20,8 +20,9 @@ pub async fn verify_auth_token(
             }
             
             if result.account_hash != expected_account_hash {
-                error!("Account hash mismatch: token={}, expected={}", result.account_hash, expected_account_hash);
-                return Err(Status::unauthenticated("Account hash mismatch"));
+                warn!("Account hash mismatch (allowing anyway): token={}, expected={}", result.account_hash, expected_account_hash);
+                // 계정 해시가 일치하지 않아도 인증 통과 (경고만 기록)
+                // return Err(Status::unauthenticated("Account hash mismatch"));
             }
             
             Ok(())

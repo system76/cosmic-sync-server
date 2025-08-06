@@ -572,7 +572,7 @@ impl crate::services::Handler for AuthHandler {
         }
         
         // Process OAuth code
-        match process_oauth_code(&req.code, Arc::new(self.app_state.oauth.clone())).await {
+        match process_oauth_code(&req.code, Arc::new(self.app_state.oauth.clone()), None).await {
             Ok((auth_token, account_hash, encryption_key)) => {
                 info!("OAuth authentication successful: account={}", account_hash);
                 

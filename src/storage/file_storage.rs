@@ -78,12 +78,18 @@ impl DatabaseFileStorage {
                 let port_str = host_port_parts.next().unwrap_or("3306");
                 let port = port_str.parse::<u16>().unwrap_or(3306);
                 
-                // Extract database name
+                // extract database name
                 let database = host_parts.next().unwrap_or("");
                 
-                // Create MySQL storage
-                MySqlStorage::new(user, password, host, port, database)
-                    .map_err(|e| StorageError::Database(format!("Failed to create MySQL storage: {}", e)))
+                // 연결 URL 생성
+                let connection_url = format!("mysql://{}:{}@{}:{}/{}", user, password, host, port, database);
+                
+                // Opts 생성
+                let opts = mysql_async::Opts::from_url(&connection_url)
+                    .map_err(|e| StorageError::Database(format!("Failed to parse MySQL connection URL: {}", e)))?;
+                
+                // MySQL 스토리지 생성
+                MySqlStorage::new(opts)
             } else {
                 Err(StorageError::ConfigurationError("Invalid MySQL URL format".to_string()))
             }

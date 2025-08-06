@@ -1,0 +1,66 @@
+    /// 계정 무관하게 그룹 ID와 워처 ID로 워처 정보 조회
+    async fn find_watcher_by_id_any_account(&self, group_id: i32, watcher_id: i32) -> Result<Option<(String, WatcherData)>> {
+        let pool = self.get_pool();
+        let mut conn = pool.get_conn().await.map_err(|e| {
+            StorageError::Database(format!("Failed to get connection: {}", e))
+        })?;
+
+        // 먼저 local_group_id와 watcher_id로 워처를 찾음 (모든 계정에서)
+        let watcher: Option<(i32, i32, String, i32, i32, String, bool)> = conn.exec_first(
+            r"SELECT id, watcher_id, account_hash, group_id, local_group_id, folder, is_recursive 
+              FROM watchers 
+              WHERE local_group_id = ? AND watcher_id = ? 
+              LIMIT 1",
+            (group_id, watcher_id)
+        ).await.map_err(|e| {
+            error!("Failed to query watcher: {}", e);
+            StorageError::Database(format!("Failed to query watcher: {}", e))
+        })?;
+
+        match watcher {
+            Some((id, watcher_id_val, account_hash, _db_group_id, _local_group_id, folder, is_recursive)) => {
+                // 워처 조건들 조회
+                let conditions = self.get_watcher_conditions(&account_hash, id).await.unwrap_or_default();
+                
+                // union과 subtract 조건 분리
+                let mut union_conditions = Vec::new();
+                let mut subtracting_conditions = Vec::new();
+                
+                for condition in conditions {
+                    let condition_data = crate::sync::ConditionData {
+                        key: condition.key,
+                        value: condition.value,
+                    };
+                    
+                    match condition.condition_type {
+                        crate::models::watcher::ConditionType::Union => {
+                            union_conditions.push(condition_data);
+                        },
+                        crate::models::watcher::ConditionType::Subtract => {
+                            subtracting_conditions.push(condition_data);
+                        }
+                    }
+                }
+                
+                let proto_watcher = WatcherData {
+                    watcher_id: watcher_id_val,
+                    folder,
+                    union_conditions,
+                    subtracting_conditions,
+                    recursive_path: is_recursive,
+                    preset: false,
+                    custom_type: "".to_string(),
+                    update_mode: "".to_string(),
+                    is_active: true,
+                    extra_json: "".to_string(),
+                };
+                
+                debug!("Found watcher from any account: account_hash={}, folder={}", account_hash, proto_watcher.folder);
+                Ok(Some((account_hash, proto_watcher)))
+            },
+            None => {
+                debug!("Watcher not found in any account: group_id={}, watcher_id={}", group_id, watcher_id);
+                Ok(None)
+            }
+        }
+    }

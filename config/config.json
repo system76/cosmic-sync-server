@@ -15,16 +15,16 @@
     "log_queries": false
   },
   "storage": {
-    "storage_type": "database",
+    "storage_type": "s3",
     "s3": {
-      "region": "us-east-1",
+      "region": "us-east-2",
       "bucket": "cosmic-sync-files",
       "key_prefix": "files/",
-      "access_key_id": null,
-      "secret_access_key": null,
+      "access_key_id": "minioadmin",
+      "secret_access_key": "minioadmin",
       "session_token": null,
-      "endpoint_url": null,
-      "force_path_style": false,
+      "endpoint_url": "http://127.0.0.1:9000",
+      "force_path_style": true,
       "use_secret_manager": false,
       "secret_name": null,
       "timeout_seconds": 30,

@@ -24,6 +24,7 @@ use crate::server::connection_handler::ConnectionHandler;
 use crate::server::connection_tracker::ConnectionTracker;
 use crate::server::connection_cleanup::{create_default_cleanup_scheduler, create_default_stats_reporter};
 use dashmap::DashMap;
+use mysql_async::Opts;
 
 /// Structure to store authentication session information
 #[derive(Debug, Clone)]
@@ -114,8 +115,15 @@ impl AppState {
                 // extract database name
                 let database = host_parts.next().unwrap_or("");
                 
+                // 연결 URL 생성
+                let connection_url = format!("mysql://{}:{}@{}:{}/{}", user, password, host, port, database);
+                
+                // Opts 생성
+                let opts = mysql_async::Opts::from_url(&connection_url)
+                    .map_err(|e| AppError::Storage(format!("Failed to parse MySQL connection URL: {}", e)))?;
+                
                 // initialize MySQL storage
-                match MySqlStorage::new(user, password, host, port, database) {
+                match MySqlStorage::new(opts) {
                     Ok(storage) => {
                         // initialize schema
                         if let Err(e) = storage.init_schema().await {

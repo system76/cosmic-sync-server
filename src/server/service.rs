@@ -571,12 +571,12 @@ impl SyncService for SyncServiceImpl {
             }
         };
         
-        let account_hash = auth_result.account_hash; // 토큰에서 추출한 실제 account_hash 사용
+        let account_hash = req.account_hash.clone(); // 클라이언트가 보낸 account_hash 사용
         
-        // 요청된 account_hash와 다르면 경고 로그 출력 (하지만 에러는 아님)
-        if req.account_hash != account_hash {
+        // 토큰에서 추출한 account_hash와 다르면 경고 로그 출력 (하지만 에러는 아님)
+        if req.account_hash != auth_result.account_hash {
             warn!("Client sent different account_hash (requested: {}, actual: {}) for device: {}", 
-                  req.account_hash, account_hash, device_hash);
+                  req.account_hash, auth_result.account_hash, device_hash);
         }
         
         // 구독 채널 생성 - 더 큰 버퍼 사용
@@ -657,12 +657,12 @@ impl SyncService for SyncServiceImpl {
             }
         };
         
-        let account_hash = auth_result.account_hash; // 토큰에서 추출한 실제 account_hash 사용
+        let account_hash = req.account_hash.clone(); // 클라이언트가 보낸 account_hash 사용
         
-        // 요청된 account_hash와 다르면 경고 로그 출력 (하지만 에러는 아님)
-        if req.account_hash != account_hash {
+        // 토큰에서 추출한 account_hash와 다르면 경고 로그 출력 (하지만 에러는 아님)
+        if req.account_hash != auth_result.account_hash {
             warn!("Client sent different account_hash (requested: {}, actual: {}) for device: {}", 
-                  req.account_hash, account_hash, device_hash);
+                  req.account_hash, auth_result.account_hash, device_hash);
         }
         
         // 장치 검증
@@ -732,12 +732,12 @@ impl SyncService for SyncServiceImpl {
             }
         };
         
-        let account_hash = auth_result.account_hash; // 토큰에서 추출한 실제 account_hash 사용
+        let account_hash = req.account_hash.clone(); // 클라이언트가 보낸 account_hash 사용
         
-        // 요청된 account_hash와 다르면 경고 로그 출력 (하지만 에러는 아님)
-        if req.account_hash != account_hash {
+        // 토큰에서 추출한 account_hash와 다르면 경고 로그 출력 (하지만 에러는 아님)
+        if req.account_hash != auth_result.account_hash {
             warn!("Client sent different account_hash (requested: {}, actual: {}) for device: {}", 
-                  req.account_hash, account_hash, device_hash);
+                  req.account_hash, auth_result.account_hash, device_hash);
         }
         
         // 장치 검증

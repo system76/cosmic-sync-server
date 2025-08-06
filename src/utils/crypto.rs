@@ -23,6 +23,36 @@ pub fn generate_account_hash_from_email(user_id: &str, email: &str) -> String {
     sha256_as_string(&input)
 }
 
+/// 이메일만으로 계정 해시 생성 (클라이언트와 호환성 유지)
+pub fn generate_account_hash_from_email_only(email: &str) -> String {
+    sha256_as_string(email)
+}
+
+/// 클라이언트와 동일한 방식으로 계정 해시 생성 테스트
+pub fn test_account_hash_generation(email: &str, name: &str, user_id: &str) {
+    use tracing::info;
+    
+    // 다양한 방식으로 해시 생성
+    let hash1 = sha256_as_string(email); // 이메일만
+    let hash2 = sha256_as_string(&format!("{}:{}", user_id, email)); // user_id:email
+    let hash3 = sha256_as_string(&format!("{}:{}", email, name)); // email:name
+    let hash4 = sha256_as_string(&format!("{}:{}:{}", user_id, email, name)); // user_id:email:name
+    let hash5 = sha256_as_string(&format!("{}:{}", name, email)); // name:email
+    let hash6 = sha256_as_string(&user_id); // user_id만
+    let hash7 = sha256_as_string(&format!("{}@system76.com", name.to_lowercase().replace(" ", ""))); // 추측: 이름 기반 이메일
+    
+    info!("🔐 Testing account hash generation:");
+    info!("  Email: {}, Name: {}, UserID: {}", email, name, user_id);
+    info!("  Hash from email only: {}", hash1);
+    info!("  Hash from user_id:email: {}", hash2);
+    info!("  Hash from email:name: {}", hash3);
+    info!("  Hash from user_id:email:name: {}", hash4);
+    info!("  Hash from name:email: {}", hash5);
+    info!("  Hash from user_id only: {}", hash6);
+    info!("  Hash from name-based email: {}", hash7);
+    info!("  Target client hash: 209f313bf330cf40fe89fae938babbeba7ec95d31237f77cf19de418c0d50a0a");
+}
+
 /// Generate device hash from user ID and registration timestamp
 pub fn generate_device_hash(user_id: &str, registered_at: &str) -> String {
     let input = format!("{}:{}", user_id, registered_at);
