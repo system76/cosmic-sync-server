@@ -79,6 +79,30 @@ impl MySqlAccountExt for MySqlStorage {
                     match conn.query_drop("COMMIT").await {
                         Ok(_) => {
                             info!("✅ Transaction committed successfully");
+                            
+                            // 새로운 연결을 사용하여 데이터베이스에 실제로 저장되었는지 확인
+                            let mut verify_conn = pool.get_conn().await.map_err(|e| {
+                                error!("❌ Failed to get connection for verification: {}", e);
+                                StorageError::Connection(format!("Failed to get connection for verification: {}", e))
+                            })?;
+                            
+                            // 명시적인 SELECT 쿼리로 계정 조회
+                            match verify_conn.exec_first::<(String, String, String, String, i64, i64, i64, bool), _, _>(
+                                "SELECT account_hash, email, name, id, created_at, updated_at, last_login, is_active FROM accounts WHERE account_hash = ?",
+                                (&account.account_hash,)
+                            ).await {
+                                Ok(Some((db_hash, db_email, db_name, db_id, db_created, db_updated, db_login, db_active))) => {
+                                    info!("✅ Verified account exists in database with explicit query");
+                                    info!("✅ Account details: hash={}, email={}, name={}, id={}, created_at={}, updated_at={}, last_login={}, is_active={}",
+                                        db_hash, db_email, db_name, db_id, db_created, db_updated, db_login, db_active);
+                                },
+                                Ok(None) => {
+                                    error!("❌ Account not found in database after creation: account_hash={}", account.account_hash);
+                                },
+                                Err(e) => {
+                                    error!("❌ Failed to verify account creation: {}", e);
+                                }
+                            }
                         },
                         Err(e) => {
                             error!("❌ Failed to commit transaction: {}", e);
@@ -87,24 +111,6 @@ impl MySqlAccountExt for MySqlStorage {
                                 error!("❌ Failed to rollback transaction: {}", e);
                             }
                             return Err(StorageError::Database(format!("Failed to commit transaction: {}", e)));
-                        }
-                    }
-                    
-                    // 데이터베이스에 실제로 저장되었는지 확인
-                    match conn.exec_first::<(String, String, String, String, i64, i64, i64, bool), _, _>(
-                        "SELECT account_hash, email, name, id, created_at, updated_at, last_login, is_active FROM accounts WHERE account_hash = ?", 
-                        (&account.account_hash,)
-                    ).await {
-                        Ok(Some((db_hash, db_email, db_name, db_id, db_created, db_updated, db_login, db_active))) => {
-                            info!("✅ Verified account exists in database: account_hash={}", db_hash);
-                            info!("✅ Account details: email={}, name={}, id={}, created_at={}, updated_at={}, last_login={}, is_active={}", 
-                                  db_email, db_name, db_id, db_created, db_updated, db_login, db_active);
-                        },
-                        Ok(None) => {
-                            error!("❌ Account not found in database after insert: account_hash={}", account.account_hash);
-                        },
-                        Err(e) => {
-                            error!("❌ Failed to verify account creation: {}", e);
                         }
                     }
                     
