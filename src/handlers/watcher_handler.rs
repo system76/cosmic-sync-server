@@ -40,10 +40,13 @@ impl WatcherHandler {
     /// Handle get watcher group request
     pub async fn get_watcher_group(&self, request: Request<GetWatcherGroupRequest>) -> Result<Response<GetWatcherGroupResponse>, Status> {
         let req = request.into_inner();
-        let account_hash = req.account_hash;
+        // 토큰으로 검증된 account_hash를 우선 사용
+        let verified = self.app_state.oauth.verify_token(&req.auth_token).await
+            .map_err(|_| Status::unauthenticated("Invalid authentication token"))?;
+        let account_hash = verified.account_hash;
         let device_hash = req.device_hash;
         let group_id = req.group_id;
-        let auth_token = req.auth_token;
+        
         
         debug!("Processing get watcher group for user: {}, device: {}, group: {}", account_hash, device_hash, group_id);
         
@@ -78,9 +81,12 @@ impl WatcherHandler {
     /// Handle get all watcher groups request
     pub async fn get_watcher_groups(&self, request: Request<GetWatcherGroupsRequest>) -> Result<Response<GetWatcherGroupsResponse>, Status> {
         let req = request.into_inner();
-        let user_id = req.account_hash;
+        // 토큰으로 검증된 account_hash를 우선 사용
+        let verified = self.app_state.oauth.verify_token(&req.auth_token).await
+            .map_err(|_| Status::unauthenticated("Invalid authentication token"))?;
+        let user_id = verified.account_hash;
         let device_hash = req.device_hash;
-        let auth_token = req.auth_token;
+        
         
         debug!("Processing get all watcher groups for user: {}, device: {}", user_id, device_hash);
         
@@ -122,7 +128,10 @@ impl WatcherHandler {
     /// Handle register watcher preset request
     pub async fn register_watcher_preset(&self, request: Request<RegisterWatcherPresetRequest>) -> Result<Response<RegisterWatcherPresetResponse>, Status> {
         let req = request.into_inner();
-        let account_hash = req.account_hash;
+        // 토큰으로 검증된 account_hash를 우선 사용
+        let verified = self.app_state.oauth.verify_token(&req.auth_token).await
+            .map_err(|_| Status::unauthenticated("Invalid authentication token"))?;
+        let account_hash = verified.account_hash;
         let device_hash = req.device_hash;
         let presets = req.presets.clone();
         
@@ -162,7 +171,10 @@ impl WatcherHandler {
     /// Handle update watcher preset request
     pub async fn update_watcher_preset(&self, request: Request<UpdateWatcherPresetRequest>) -> Result<Response<UpdateWatcherPresetResponse>, Status> {
         let req = request.into_inner();
-        let account_hash = req.account_hash;
+        // 토큰으로 검증된 account_hash를 우선 사용
+        let verified = self.app_state.oauth.verify_token(&req.auth_token).await
+            .map_err(|_| Status::unauthenticated("Invalid authentication token"))?;
+        let account_hash = verified.account_hash;
         let device_hash = req.device_hash;
         let presets = req.presets.clone();
         
@@ -202,7 +214,10 @@ impl WatcherHandler {
     /// Handle get watcher preset request
     pub async fn get_watcher_preset(&self, request: Request<GetWatcherPresetRequest>) -> Result<Response<GetWatcherPresetResponse>, Status> {
         let req = request.into_inner();
-        let account_hash = req.account_hash;
+        // 토큰으로 검증된 account_hash를 우선 사용
+        let verified = self.app_state.oauth.verify_token(&req.auth_token).await
+            .map_err(|_| Status::unauthenticated("Invalid authentication token"))?;
+        let account_hash = verified.account_hash;
         let device_hash = req.device_hash;
         
         debug!("Processing get watcher preset for user: {}, device: {}", account_hash, device_hash);
@@ -474,7 +489,10 @@ impl WatcherHandler {
     /// Handle integrated configuration synchronization
     pub async fn sync_configuration(&self, request: Request<SyncConfigurationRequest>) -> Result<Response<SyncConfigurationResponse>, Status> {
         let req = request.into_inner();
-        let account_hash = req.account_hash.clone();
+        // 토큰으로 검증된 account_hash를 우선 사용
+        let verified = self.app_state.oauth.verify_token(&req.auth_token).await
+            .map_err(|_| Status::unauthenticated("Invalid authentication token"))?;
+        let account_hash = verified.account_hash;
         let device_hash = req.device_hash.clone();
         let client_watcher_groups = req.watcher_groups;
         let client_presets = req.presets;

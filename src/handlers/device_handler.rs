@@ -43,19 +43,11 @@ impl DeviceHandler {
     
     /// Register device API handler
     pub async fn register_device(&self, request: Request<RegisterDeviceRequest>) -> Result<Response<RegisterDeviceResponse>, Status> {
-        let req = request.into_inner();
+        let mut req = request.into_inner();
         info!("device registration request: account_hash={}, device_hash={}, os_version={}, app_version={}",
              req.account_hash, req.device_hash, req.os_version, req.app_version);
 
-        // Input validation
-        if req.account_hash.is_empty() {
-            return Ok(Response::new(RegisterDeviceResponse {
-                success: false,
-                device_hash: String::new(),
-                return_message: "Account hash cannot be empty".to_string(),
-            }));
-        }
-
+        // Input validation (device_hash만 필수)
         if req.device_hash.is_empty() {
             return Ok(Response::new(RegisterDeviceResponse {
                 success: false,
@@ -80,35 +72,27 @@ impl DeviceHandler {
             }));
         }
         
-        // validate authentication token
+        // validate authentication token and normalize account_hash
         match self.app_state.oauth.validate_token(&req.auth_token).await {
             Ok(validated_account_hash) => {
-                // check if requested account_hash matches the account hash in the token
-                if validated_account_hash != req.account_hash {
-                    warn!("account hash mismatch: request={}, token={}", req.account_hash, validated_account_hash);
-                    return Ok(Response::new(RegisterDeviceResponse {
-                        success: false,
-                        device_hash: String::new(),
-                        return_message: "authentication error: account hash mismatch".to_string(),
-                    }));
+                if !req.account_hash.is_empty() && validated_account_hash != req.account_hash {
+                    debug!("Normalizing account_hash from request={} to token={}", req.account_hash, validated_account_hash);
                 }
+                let server_account_hash = validated_account_hash;
                 
-                // device registration/update (handle by upsert)
-                info!("device registration/update: account_hash={}, device_hash={}", req.account_hash, req.device_hash);
+                info!("device registration/update: account_hash={}, device_hash={}", server_account_hash, req.device_hash);
                 
-                // create device object
                 let device = Device::new(
-                    req.account_hash.clone(),
+                    server_account_hash.clone(),
                     req.device_hash.clone(),
                     req.is_active,
                     req.os_version.clone(),
                     req.app_version.clone(),
                 );
                 
-                // device registration/update (upsert)
                 match self.app_state.device.register_device(&device).await {
                     Ok(_) => {
-                        info!("✅ device registration/update successful: account_hash={}, device_hash={}", req.account_hash, req.device_hash);
+                        info!("✅ device registration/update successful: account_hash={}, device_hash={}", server_account_hash, req.device_hash);
                         let response = RegisterDeviceResponse {
                             success: true,
                             device_hash: device.device_hash.clone(),
@@ -117,7 +101,7 @@ impl DeviceHandler {
                         Ok(Response::new(response))
                     },
                     Err(e) => {
-                        error!("device registration/update failed: account_hash={}, device_hash={}, error={}", req.account_hash, req.device_hash, e);
+                        error!("device registration/update failed: account_hash={}, device_hash={}, error={}", server_account_hash, req.device_hash, e);
                         let response = RegisterDeviceResponse {
                             success: false,
                             device_hash: String::new(),

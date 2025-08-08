@@ -46,6 +46,7 @@ Desktop.ini
 
 # Log files
 *.log
+*.txt
 
 # Backup files
 *~

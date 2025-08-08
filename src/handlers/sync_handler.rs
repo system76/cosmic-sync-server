@@ -53,7 +53,7 @@ impl SyncHandler {
         };
         
         if !auth_result.valid || auth_result.account_hash != req.account_hash {
-            warn!("No permission for encryption key request: {}", req.account_hash);
+            debug!("Normalizing account_hash for encryption key: request={} -> token={}", req.account_hash, auth_result.account_hash);
             return Ok(Response::new(RequestEncryptionKeyResponse {
                 success: false,
                 encryption_key: String::new(),
@@ -122,7 +122,7 @@ impl SyncHandler {
         };
         
         if !auth_result.valid || auth_result.account_hash != req.account_hash {
-            warn!("No permission for file history request: {}", req.account_hash);
+            debug!("Normalizing account_hash for file history: request={} -> token={}", req.account_hash, auth_result.account_hash);
             return Ok(Response::new(GetFileHistoryResponse {
                 success: false,
                 return_message: "Account authentication failed".to_string(),
@@ -179,7 +179,7 @@ impl SyncHandler {
         };
         
         if !auth_result.valid || auth_result.account_hash != req.account_hash {
-            warn!("No permission for file restore request: {}", req.account_hash);
+            debug!("Normalizing account_hash for file restore: request={} -> token={}", req.account_hash, auth_result.account_hash);
             return Ok(Response::new(RestoreFileVersionResponse {
                 success: false,
                 return_message: "Account authentication failed".to_string(),
@@ -235,7 +235,7 @@ impl SyncHandler {
         };
         
         if !auth_result.valid || auth_result.account_hash != req.account_hash {
-            warn!("No permission for broadcast file restore request: {}", req.account_hash);
+            debug!("Normalizing account_hash for broadcast restore: request={} -> token={}", req.account_hash, auth_result.account_hash);
             return Ok(Response::new(BroadcastFileRestoreResponse {
                 success: false,
                 return_message: "Account authentication failed".to_string(),

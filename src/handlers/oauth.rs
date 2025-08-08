@@ -168,17 +168,33 @@ pub async fn handle_oauth_callback(
         )));
     }
     
-    // Get device_hash from state parameter (CSRF token)
+    // Get device_hash from state parameter (CSRF token) or headers/cookies as fallback
     let device_hash = match &query.state {
         Some(token) => {
             info!("OAuth callback received with state/device_hash: {}", token);
             token.clone()
         },
         None => {
-            warn!("OAuth callback without state token - generating temporary device_hash");
-            let temp_device_hash = format!("temp_{}", chrono::Utc::now().timestamp());
-            info!("Generated temporary device_hash: {}", temp_device_hash);
-            temp_device_hash
+            // Try request headers first
+            let header_device_hash = req.headers()
+                .get("X-Device-Hash")
+                .or_else(|| req.headers().get("X-Client-Device-Hash"))
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            if let Some(h) = header_device_hash {
+                info!("OAuth callback without state; using device_hash from header: {}", h);
+                h
+            } else if let Some(cookie) = req.cookie("device_hash") {
+                let v = cookie.value().to_string();
+                info!("OAuth callback without state; using device_hash from cookie: {}", v);
+                v
+            } else {
+                warn!("OAuth callback without state token or device identifiers - generating temporary device_hash");
+                let temp_device_hash = format!("temp_{}", chrono::Utc::now().timestamp());
+                info!("Generated temporary device_hash: {}", temp_device_hash);
+                temp_device_hash
+            }
         }
     };
     

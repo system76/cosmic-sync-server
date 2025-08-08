@@ -32,11 +32,11 @@ pub async fn start_server(config: ServerConfig) -> Result<()> {
     // Initialize performance monitoring
     let performance_monitor = Arc::new(PerformanceMonitor::new());
     
-    // Initialize storage with connection pooling
+    // Initialize storage with connection pooling (MySQL if provided, otherwise memory)
     let storage = init_storage_from_config(&config).await?;
     
-    // Initialize optimized app state
-    let app_state = Arc::new(AppState::new_from_server_config(&config).await?);
+    // Initialize optimized app state using the same storage instance
+    let app_state = Arc::new(AppState::new_with_storage_and_server_config(storage.clone(), &config).await?);
     
     // Start both gRPC and HTTP servers
     let grpc_server = start_grpc_server(&config, app_state.clone());
@@ -80,8 +80,8 @@ pub async fn start_server_with_storage(
 ) -> Result<()> {
     info!("🚀 Starting server with custom storage");
     
-    // Initialize app state with provided storage
-    let app_state = Arc::new(AppState::new_from_server_config(&config).await?);
+    // Initialize app state with provided storage (avoid creating in-memory storage)
+    let app_state = Arc::new(AppState::new_with_storage_and_server_config(storage.clone(), &config).await?);
     
     // Start servers
     let grpc_server = start_grpc_server(&config, app_state.clone());

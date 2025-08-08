@@ -85,8 +85,13 @@ impl SyncServerComponent {
         info!("🔧 Creating SyncServerComponent");
         
         let app_state = Arc::new(
-            AppState::new_from_server_config(&config).await
-                .map_err(|e| SyncServerError::ConfigError(e.to_string()))?
+            AppState::new_with_storage_and_server_config(
+                // In component mode we don't have external storage; fall back to legacy helper to honor config
+                crate::server::startup::init_storage_legacy(config.storage_path.clone()).await,
+                &config,
+            )
+            .await
+            .map_err(|e| SyncServerError::ConfigError(e.to_string()))?
         );
         
         Ok(Self {

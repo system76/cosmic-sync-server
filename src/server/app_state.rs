@@ -235,6 +235,65 @@ impl AppState {
         }
     }
 
+    /// initialize services using an existing storage (to avoid creating a separate in-memory storage)
+    pub async fn new_with_storage_and_server_config(
+        storage: Arc<dyn Storage>,
+        config: &ServerConfig,
+    ) -> Result<Self, AppError> {
+        // create simple Config object (reuse server config; others default)
+        let full_config = Config {
+            server: config.clone(),
+            database: crate::config::settings::DatabaseConfig::default(),
+            logging: crate::config::settings::LoggingConfig::default(),
+            features: crate::config::settings::FeatureFlags::default(),
+            storage: crate::config::settings::StorageConfig::default(),
+        };
+
+        // initialize notification manager
+        let notification_manager = Arc::new(NotificationManager::new());
+
+        // initialize OAuth service
+        let oauth = OAuthService::new(storage.clone());
+
+        // initialize encryption service
+        let encryption = EncryptionService::new(storage.clone());
+
+        // initialize watcher service
+        let watcher = WatcherService::with_storage(storage.clone());
+
+        // initialize file storage with existing storage context
+        let file_storage = Self::initialize_file_storage_with_storage(storage.clone()).await?;
+
+        // initialize file service (include notification manager and file storage)
+        let file = FileService::with_storage_file_storage_and_notifications(
+            storage.clone(),
+            file_storage,
+            notification_manager.clone(),
+        );
+
+        // initialize device service
+        let device = DeviceService::with_storage(storage.clone());
+
+        // initialize version service
+        let version_service = VersionServiceImpl::new(storage.clone(), file.clone());
+
+        Ok(Self {
+            config: full_config,
+            storage,
+            oauth,
+            encryption,
+            watcher,
+            file,
+            device,
+            version_service,
+            notification_manager,
+            auth_sessions: Arc::new(Mutex::new(HashMap::new())),
+            connection_handler: Arc::new(RwLock::new(ConnectionHandler::new())),
+            connection_tracker: Arc::new(ConnectionTracker::new()),
+            client_store: Arc::new(ClientStore::new()),
+        })
+    }
+
     /// Create a new application state with given configuration
     pub async fn new(config: &Config) -> Result<Self, AppError> {
         let (storage, notification_manager, oauth, encryption, watcher, file, device, version_service) = 

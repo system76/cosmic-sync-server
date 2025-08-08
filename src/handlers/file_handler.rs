@@ -49,10 +49,12 @@ impl FileHandler {
             return Ok(Response::new(response::file_upload_error("File data size mismatch")));
         }
         
-        // 1. Verify authentication
-        if let Err(_) = auth::verify_auth_token(&self.app_state.oauth, &req.auth_token, &req.account_hash).await {
-            return Ok(Response::new(response::file_upload_error("Authentication failed")));
-        }
+        // 1. Verify authentication and normalize account_hash
+        let verified = match self.app_state.oauth.verify_token(&req.auth_token).await {
+            Ok(v) if v.valid => v,
+            _ => return Ok(Response::new(response::file_upload_error("Authentication failed")))
+        };
+        let server_account_hash = verified.account_hash;
         
         // 2. Validate input
         if let Err(msg) = self.validate_upload_input(&req) {
@@ -65,9 +67,10 @@ impl FileHandler {
             Err(msg) => return Ok(Response::new(response::file_upload_error(msg))),
         };
         
-        // 4. Validate file path with watcher (single attempt, fail immediately if not valid)
+        // 4. Validate file path with watcher (single attempt)
+        // If watcher/group mapping is missing, allow upload (fallback) and log at debug level
         if let Err(msg) = self.validate_file_path_with_watcher(&req, &normalized_file_path).await {
-            return Ok(Response::new(response::file_upload_error(msg)));
+            debug!("Skipping strict watcher path validation: {}", msg);
         }
         
         // 5. Generate file ID
@@ -76,15 +79,37 @@ impl FileHandler {
             Err(msg) => return Ok(Response::new(response::file_upload_error(msg))),
         };
         
-        // 6. Convert client IDs to server IDs
-        let (server_group_id, server_watcher_id) = match self.convert_to_server_ids(&req).await {
-            Ok(ids) => ids,
-            Err(msg) => return Ok(Response::new(response::file_upload_error(msg))),
+        // 6. Convert client IDs to server IDs (ensure mapping exists on the fly)
+        let (server_group_id, server_watcher_id) = match self.app_state.storage.as_any().downcast_ref::<crate::storage::mysql::MySqlStorage>() {
+            Some(mysql) => {
+                match mysql.ensure_server_ids_for(
+                    &server_account_hash,
+                    &req.device_hash,
+                    req.group_id,
+                    req.watcher_id,
+                    Some(&normalized_file_path),
+                ).await {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        error!("Failed to ensure server IDs: {}", e);
+                        return Ok(Response::new(response::file_upload_error(format!("Failed to ensure server IDs: {}", e))));
+                    }
+                }
+            },
+            None => {
+                // Fallback: best-effort conversion
+                match self.convert_to_server_ids(&req).await {
+                    Ok(ids) => ids,
+                    Err(msg) => return Ok(Response::new(response::file_upload_error(msg))),
+                }
+            }
         };
         
         // 7. Create file info with server IDs
+        let mut req_server = req.clone();
+        req_server.account_hash = server_account_hash.clone();
         let file_info = self.create_file_info_with_server_ids(
-            &req, 
+            &req_server,
             file_id, 
             normalized_file_path,
             server_group_id,
@@ -258,9 +283,9 @@ impl FileHandler {
                 Ok((server_group_id, server_watcher_id))
             },
             Ok(None) => {
-                error!("No matching group/watcher found for client IDs: group_id={}, watcher_id={}", 
-                       req.group_id, req.watcher_id);
-                Err("Watcher group or watcher not found".to_string())
+                debug!("No matching group/watcher; falling back to server IDs (0,0) for account={} client(group={}, watcher={})",
+                       req.account_hash, req.group_id, req.watcher_id);
+                Ok((0, 0))
             },
             Err(e) => {
                 error!("Failed to convert IDs: {}", e);

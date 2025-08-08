@@ -33,6 +33,123 @@ impl MySqlStorage {
             pool,
         })
     }
+
+    /// Ensure server-side watcher_group and watcher mapping exists for given client IDs
+    /// Returns (server_group_id, server_watcher_id)
+    pub async fn ensure_server_ids_for(
+        &self,
+        account_hash: &str,
+        device_hash: &str,
+        client_group_id: i32,
+        client_watcher_id: i32,
+        folder_hint: Option<&str>,
+    ) -> Result<(i32, i32)> {
+        let pool = self.get_pool();
+        let mut conn = pool.get_conn().await.map_err(|e| {
+            StorageError::Database(format!("Failed to get connection: {}", e))
+        })?;
+
+        // Use SERIALIZABLE to avoid race on first-time creation
+        conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE").await.map_err(|e| {
+            StorageError::Database(format!("Failed to set isolation level: {}", e))
+        })?;
+
+        let mut tx = conn.start_transaction(TxOpts::default()).await.map_err(|e| {
+            StorageError::Database(format!("Failed to start transaction: {}", e))
+        })?;
+
+        // 1) Ensure watcher_group row for (account_hash, client_group_id)
+        let existing_group: Option<(i32,)> = tx.exec_first(
+            "SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?",
+            (account_hash, client_group_id)
+        ).await.map_err(|e| StorageError::Database(format!("Failed to query watcher_groups: {}", e)))?;
+
+        let server_group_id = if let Some((id,)) = existing_group {
+            id
+        } else {
+            // Insert minimal watcher_group without touching other groups
+            let now_dt = chrono::Utc::now();
+            let created_at = crate::utils::time::datetime_to_mysql_string(&now_dt);
+            let updated_at = created_at.clone();
+            let title = format!("Client Group {}", client_group_id);
+
+            tx.exec_drop(
+                r"INSERT INTO watcher_groups (
+                    group_id, account_hash, device_hash, title,
+                    created_at, updated_at, is_active
+                ) VALUES (?, ?, ?, ?, ?, ?, 1)",
+                (client_group_id, account_hash, device_hash, &title, &created_at, &updated_at)
+            ).await.map_err(|e| StorageError::Database(format!("Failed to insert watcher_group: {}", e)))?;
+
+            // Get inserted id
+            tx.exec_first::<(i32,), _, _>("SELECT LAST_INSERT_ID()", ())
+                .await
+                .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?
+                .map(|(id,)| id)
+                .unwrap_or(0)
+        };
+
+        if server_group_id == 0 {
+            // Fallback reselect if needed
+            let re: Option<(i32,)> = tx.exec_first(
+                "SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?",
+                (account_hash, client_group_id)
+            ).await.map_err(|e| StorageError::Database(format!("Failed to reselect watcher_groups: {}", e)))?;
+            if let Some((id,)) = re { id } else { 0 }
+        } else { server_group_id };
+
+        let server_group_id: i32 = if server_group_id == 0 {
+            return Err(StorageError::Database("Failed to ensure watcher_group id".to_string()));
+        } else { server_group_id };
+
+        // 2) Ensure watcher row mapping for (account_hash, local_group_id=client_group_id, watcher_id=client_watcher_id)
+        let existing_watcher: Option<(i32,)> = tx.exec_first(
+            "SELECT id FROM watchers WHERE account_hash = ? AND local_group_id = ? AND watcher_id = ?",
+            (account_hash, client_group_id, client_watcher_id)
+        ).await.map_err(|e| StorageError::Database(format!("Failed to query watchers: {}", e)))?;
+
+        let server_watcher_id = if let Some((id,)) = existing_watcher {
+            id
+        } else {
+            let folder = folder_hint
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "~/".to_string());
+            let folder_name = folder.split('/').last().unwrap_or("Watcher").to_string();
+            let title = format!("Watcher for {}", folder_name);
+            let now_ts = chrono::Utc::now().timestamp();
+
+            tx.exec_drop(
+                r"INSERT INTO watchers (
+                    watcher_id, account_hash, group_id, local_group_id, folder, title,
+                    is_recursive, created_at, updated_at, is_active, extra_json
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 1, '{}')",
+                (
+                    client_watcher_id,
+                    account_hash,
+                    server_group_id,
+                    client_group_id,
+                    &folder,
+                    &title,
+                    now_ts,
+                    now_ts,
+                )
+            ).await.map_err(|e| StorageError::Database(format!("Failed to insert watcher: {}", e)))?;
+
+            tx.exec_first::<(i32,), _, _>("SELECT LAST_INSERT_ID()", ())
+                .await
+                .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?
+                .map(|(id,)| id)
+                .unwrap_or(0)
+        };
+
+        if server_watcher_id == 0 {
+            return Err(StorageError::Database("Failed to ensure watcher id".to_string()));
+        }
+
+        tx.commit().await.map_err(|e| StorageError::Database(format!("Failed to commit ensure_server_ids_for: {}", e)))?;
+
+        Ok((server_group_id, server_watcher_id))
+    }
     
     /// Create a new MySQL storage instance
     pub fn new(opts: Opts) -> Result<Self> {
