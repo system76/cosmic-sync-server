@@ -13,13 +13,8 @@ use rand::{RngCore, rngs::OsRng};
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use hex;
-use std::time::{SystemTime, UNIX_EPOCH};
-use rand::Rng;
-use crate::auth::token::{generate_auth_token, generate_state_token, generate_session_token, extract_account_hash};
-use crate::models::device::Device;
+use crate::auth::token::{generate_auth_token, generate_state_token};
 use crate::auth::{AuthError, Result};
-use std::collections::HashMap;
-use tokio::sync::RwLock;
 
 // OAuth token response structure
 #[derive(Debug, Deserialize)]
@@ -126,15 +121,7 @@ impl OAuthService {
         let scope = std::env::var("OAUTH_SCOPE")
             .unwrap_or_else(|_| "profile:read".to_string());
         
-        // 디버깅을 위한 로그 추가
-        info!("🔧 OAuth 서비스 초기화:");
-        info!("  OAUTH_CLIENT_ID: {}", client_id);
-        info!("  OAUTH_CLIENT_SECRET: {}...", &client_secret[..std::cmp::min(8, client_secret.len())]);
-        info!("  OAUTH_REDIRECT_URI: {}", redirect_uri);
-        info!("  OAUTH_AUTH_URL: {}", auth_url);
-        info!("  OAUTH_TOKEN_URL: {}", token_url);
-        info!("  OAUTH_USER_INFO_URL: {}", user_info_url);
-        info!("  OAUTH_SCOPE: {}", scope);
+        debug!("OAuth service initialized");
         
         Self { 
             storage,

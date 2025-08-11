@@ -3,10 +3,10 @@ use tracing::{debug, info, error, warn};
 use crate::models::file::FileInfo as ModelFileInfo;
 use crate::models::device::Device;
 use crate::sync;
-use crate::sync::{FileUpdateNotification, file_update_notification};
+use crate::sync::FileUpdateNotification;
 use crate::storage::{Storage, StorageError, Result as StorageResult, FileStorage};
 use crate::models::file::FileInfo as FileInfoData;
-use prost_types;
+// removed unused prost_types
 use chrono::Utc;
 use crate::server::notification_manager::NotificationManager;
 use std::io::{Error, ErrorKind};

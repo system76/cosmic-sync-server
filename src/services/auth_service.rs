@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tracing::{info, error, debug};
+use tracing::{error, debug};
 use crate::models::auth::AuthToken;
 use crate::models::account::Account;
 use crate::storage::{Storage, StorageError};
@@ -45,7 +45,7 @@ impl AuthService {
     }
     
     /// Generate a token for the given account hash
-    pub fn generate_token(&self, account_hash: &str) -> String {
+    pub fn generate_token(&self, _account_hash: &str) -> String {
         let token_uuid = Uuid::new_v4();
         token_uuid.to_string()
     }

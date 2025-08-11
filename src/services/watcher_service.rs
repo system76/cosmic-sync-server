@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use tracing::debug;
 use crate::models::watcher::{WatcherGroup, WatcherGroupData, Watcher as ModelWatcher};
@@ -58,11 +57,7 @@ impl WatcherService {
         
         // 그룹 정보를 가져옴
         let group_data = self.storage.get_watcher_group_by_account_and_id(account_hash, group_id).await?;
-        if let Some(group) = group_data {
-            return Ok(group.watchers);
-        }
-        
-        Ok(Vec::new())
+        Ok(group_data.map(|g| g.watchers).unwrap_or_default())
     }
 
     pub async fn get_watchers_by_group(
@@ -74,11 +69,7 @@ impl WatcherService {
         
         // 그룹 정보를 가져옴
         let group_data = self.storage.get_watcher_group_by_account_and_id(account_hash, group_id).await?;
-        if let Some(group) = group_data {
-            return Ok(group.watchers);
-        }
-        
-        Ok(Vec::new())
+        Ok(group_data.map(|g| g.watchers).unwrap_or_default())
     }
 
     pub async fn get_watcher_group_by_account_and_id(

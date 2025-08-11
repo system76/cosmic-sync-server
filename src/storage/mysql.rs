@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use chrono::prelude::*;
 use mysql_async::{prelude::*, Opts, Pool, TxOpts};
-use tracing::{debug, error, info, warn};
-use std::sync::Arc;
+use tracing::{debug, error, info};
 
 use crate::storage::{Result, Storage, StorageError, StorageMetrics};
 use crate::models::watcher::WatcherCondition;
@@ -540,6 +539,7 @@ impl MySqlStorage {
     }
     
     // Helper method to convert SQL error to StorageError
+    #[allow(dead_code)]
     fn sql_error(e: mysql_async::Error) -> StorageError {
         StorageError::Database(format!("SQL error: {}", e))
     }

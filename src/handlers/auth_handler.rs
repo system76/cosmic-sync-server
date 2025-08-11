@@ -16,11 +16,8 @@ use crate::sync::{
 use crate::server::app_state::{AppState, AuthSession};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn, error, debug};
+use chrono::Utc;
 use crate::auth::oauth::process_oauth_code;
-use std::collections::HashMap;
-use chrono::{Utc, Duration};
-use uuid;
-use serde_json;
 
 /// Authentication-related request handler
 pub struct AuthHandler {
@@ -44,14 +41,14 @@ impl AuthHandler {
         let mut sessions = self.app_state.auth_sessions.lock()
             .map_err(|e| format!("Failed to acquire session lock: {}", e))?;
         
-        // log current session list
-        let session_ids: Vec<String> = sessions.keys().cloned().collect();
-        debug!("Current active sessions: {:?}", session_ids);
+        // log current session count only (avoid noisy debug)
+        let active_count = sessions.len();
+        debug!("Active session count: {}", active_count);
         
         if let Some(session) = sessions.get_mut(device_hash) {
             // found existing session - update
             info!("Found existing session for device_hash: {}, updating with auth data", device_hash);
-            info!("Before update - Session state: auth_token_present={}, account_hash_present={}, encryption_key_present={}", 
+            debug!("Before update - has_token={}, has_account={}, has_key={}", 
                 session.auth_token.is_some(),
                 session.account_hash.is_some(),
                 session.encryption_key.is_some()
@@ -61,7 +58,7 @@ impl AuthHandler {
             session.account_hash = Some(account_hash.to_string());
             session.encryption_key = Some(encryption_key.to_string());
             
-            info!("After update - Session state: auth_token_present={}, account_hash_present={}, encryption_key_present={}", 
+            debug!("After update - has_token={}, has_account={}, has_key={}", 
                 session.auth_token.is_some(),
                 session.account_hash.is_some(),
                 session.encryption_key.is_some()
@@ -71,13 +68,10 @@ impl AuthHandler {
                 device_hash, 
                 account_hash
             );
-            debug!("Session details updated: client_id={}, auth_token_len={}", 
-                session.client_id,
-                auth_token.len()
-            );
+            debug!("Session updated: client_id={}, token_len={}", session.client_id, auth_token.len());
         } else {
             // no existing session found - create new session
-            info!("No existing session found for device_hash: {} - creating new session", device_hash);
+            info!("Creating new session for device_hash: {}", device_hash);
             
             let now = Utc::now();
             let new_session = AuthSession {
@@ -94,18 +88,8 @@ impl AuthHandler {
             info!("Created new authenticated session for device_hash: {}", device_hash);
         }
         
-        // check session status after update
-        let session_exists = sessions.contains_key(device_hash);
-        info!("After update - session exists: {}", session_exists);
-        if session_exists {
-            if let Some(session) = sessions.get(device_hash) {
-                info!("Final verification - Session has complete auth data: auth_token={}, account_hash={}, encryption_key={}", 
-                    session.auth_token.is_some(),
-                    session.account_hash.is_some(),
-                    session.encryption_key.is_some()
-                );
-            }
-        }
+        // post-update quick check (debug only)
+        let _ = sessions.contains_key(device_hash);
         
         Ok(())
     }
@@ -294,7 +278,7 @@ impl AuthHandler {
                     Ok(Response::new(response))
                 },
                 Err(e) => {
-                    error!("Token verification failed: {}", e);
+                    debug!("Token verification failed: {}", e);
                     let response = ValidateTokenResponse {
                         is_valid: false,
                         account_hash: String::new(),
@@ -307,7 +291,7 @@ impl AuthHandler {
 
     /// Handle login request - only OAuth is supported, direct login is not supported
     pub async fn login(&self, request: Request<LoginRequest>) -> Result<Response<LoginResponse>, Status> {
-        warn!("Direct login method is deprecated. Please use OAuth authentication instead.");
+        warn!("Deprecated direct login method called");
         
         // response for unsupported feature
         let response = LoginResponse {
@@ -322,7 +306,7 @@ impl AuthHandler {
     
     /// Handle verify login request - only OAuth is supported, direct login is not supported
     pub async fn verify_login(&self, request: Request<VerifyLoginRequest>) -> Result<Response<VerifyLoginResponse>, Status> {
-        warn!("Direct login verification is deprecated. Please use OAuth authentication instead.");
+        warn!("Deprecated verify_login called");
         
         // token verification is still needed, so the behavior is kept
         let req = request.into_inner();
@@ -360,7 +344,7 @@ impl AuthHandler {
 
     /// Process auth success notification from client
     pub async fn process_auth_notification(&self, notification: &AuthSuccessNotification) -> Result<AuthNotificationResponse, String> {
-        debug!("Processing auth success notification for session: {}", notification.session_id);
+        debug!("Processing auth success notification: {}", notification.session_id);
         
         // update session
         self.update_session(
@@ -385,7 +369,7 @@ impl AuthHandler {
         
         match self.app_state.storage.create_auth_token(&token).await {
             Ok(_) => {
-                info!("Auth token saved successfully for session: {}", notification.session_id);
+                debug!("Auth token saved for session: {}", notification.session_id);
                 Ok(AuthNotificationResponse {
                     success: true,
                     return_message: String::new(),

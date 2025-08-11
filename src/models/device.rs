@@ -1,9 +1,7 @@
-use uuid::Uuid;
 use chrono::{DateTime, Utc, TimeZone};
 use serde::{Serialize, Deserialize};
 use crate::sync;
 use crate::utils::time::{timestamp_to_datetime, datetime_to_timestamp};
-use crate::utils::crypto::generate_device_hash;
 
 /// User device information
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

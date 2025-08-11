@@ -3,7 +3,7 @@ use tracing::debug;
 use uuid::Uuid;
 use crate::models::device::Device;
 use crate::sync;
-use crate::models::device::DeviceInfo as ModelDeviceInfo;
+// remove unused alias import
 use crate::storage::{Storage, StorageError};
 use crate::models::account::Account;
 use chrono;

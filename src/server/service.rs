@@ -68,9 +68,9 @@ pub struct SyncServiceImpl {
     /// Application state
     pub app_state: Arc<AppState>,
     /// OAuth service
-    oauth: Arc<OAuthService>,
+    oauth: Arc<OAuthService>, // retained for future use
     /// Authentication handler
-    auth_handler: AuthHandler,
+    auth_handler: AuthHandler, // retained for future use
     /// Device handler
     device_handler: DeviceHandler,
     /// File handler
@@ -502,7 +502,7 @@ impl SyncService for SyncServiceImpl {
     ) -> Result<Response<Self::SubscribeToAuthUpdatesStream>, Status> {
         debug!("Auth updates subscription request received");
         
-        let (tx, rx) = mpsc::channel(128);
+        let (_tx, rx) = mpsc::channel(128);
         let stream = ReceiverStream::new(rx);
         
         // TODO: 실제 사용자 인증 상태 모니터링 및 업데이트 로직 구현
@@ -519,7 +519,7 @@ impl SyncService for SyncServiceImpl {
     ) -> Result<Response<Self::SubscribeToDeviceUpdatesStream>, Status> {
         debug!("Device updates subscription request received");
         
-        let (tx, rx) = mpsc::channel(128);
+        let (_tx, rx) = mpsc::channel(128);
         let stream = ReceiverStream::new(rx);
         
         // TODO: 실제 장치 업데이트 모니터링 구현
@@ -536,7 +536,7 @@ impl SyncService for SyncServiceImpl {
     ) -> Result<Response<Self::SubscribeToEncryptionKeyUpdatesStream>, Status> {
         debug!("Encryption key updates subscription request received");
         
-        let (tx, rx) = mpsc::channel(128);
+        let (_tx, rx) = mpsc::channel(128);
         let stream = ReceiverStream::new(rx);
         
         // TODO: 실제 암호화 키 업데이트 모니터링 구현
@@ -897,7 +897,7 @@ impl SyncService for SyncServiceImpl {
     ) -> Result<Response<Self::SubscribeToVersionUpdatesStream>, Status> {
         debug!("Version updates subscription requested");
         
-        let (tx, rx) = mpsc::channel(128);
+        let (_tx, rx) = mpsc::channel(128);
         
         // Create a stream from the receiver
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|notification| {

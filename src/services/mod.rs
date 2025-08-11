@@ -49,6 +49,7 @@ impl GrpcErrorExt for Status {
 }
 
 /// gRPC 요청 핸들러 트레이트
+#[allow(unused_variables)]
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {
     // OAuth 관련 메서드

@@ -1,12 +1,10 @@
 use chrono::{DateTime, Utc, TimeZone};
-use serde::{Deserialize, Serialize, Deserializer, Serializer};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::sync;
 use prost_types::Timestamp;
-use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::utils::time::{timestamp_to_datetime, datetime_to_timestamp};
 use crate::utils::time::timestamp_serde;
+// timestamp_serde already imported above
 use crate::utils::crypto::generate_file_id;
 
 /// Information about a file for synchronization

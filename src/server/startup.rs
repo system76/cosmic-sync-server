@@ -29,8 +29,8 @@ use actix_cors::Cors;
 pub async fn start_server(config: ServerConfig) -> Result<()> {
     info!("🚀 Starting COSMIC Sync Server with optimized configuration");
     
-    // Initialize performance monitoring
-    let performance_monitor = Arc::new(PerformanceMonitor::new());
+    // Initialize performance monitoring (reserved, not used yet)
+    let _performance_monitor = Arc::new(PerformanceMonitor::new());
     
     // Initialize storage with connection pooling (MySQL if provided, otherwise memory)
     let storage = init_storage_from_config(&config).await?;
@@ -242,7 +242,7 @@ async fn start_http_server(
     })
     .workers(config.worker_threads)
     .keep_alive(Duration::from_secs(75))
-    .client_timeout(Duration::from_secs(120))
+    .client_request_timeout(Duration::from_secs(120))
     .shutdown_timeout(30)
     .bind(&addr)
     .map_err(|e| SyncError::Network(format!("Failed to bind HTTP server: {}", e)))?
