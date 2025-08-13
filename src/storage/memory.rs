@@ -440,20 +440,41 @@ impl Storage for MemoryStorage {
     /// Delete watcher group
     async fn delete_watcher_group(&self, account_hash: &str, group_id: i32) -> crate::storage::Result<()> {
         let mut data = self.data.lock().await;
-        
-        // 그룹 확인
-        if let Some(group) = data.watcher_groups.get(&group_id) {
-            // 사용자 확인
-            if group.account_hash != account_hash {
-                return Err(StorageError::PermissionDenied("Not the owner of the watcher group".to_string()));
+
+        // 그룹 확인 및 소유자 검증
+        let owned = match data.watcher_groups.get(&group_id) {
+            Some(group) if group.account_hash == account_hash => true,
+            Some(_) => return Err(StorageError::PermissionDenied("Not the owner of the watcher group".to_string())),
+            None => return Err(StorageError::NotFound("Watcher group not found".to_string())),
+        };
+
+        if owned {
+            // 해당 그룹에 속한 watcher 및 조건 정리
+            let watcher_ids: Vec<i32> = data.watchers
+                .iter()
+                .filter(|(_, w)| w.account_hash == account_hash && w.group_id == group_id)
+                .map(|(id, _)| *id)
+                .collect();
+
+            // 조건 삭제
+            let condition_ids: Vec<i64> = data.watcher_conditions
+                .iter()
+                .filter(|(_, c)| watcher_ids.contains(&c.watcher_id))
+                .map(|(id, _)| *id)
+                .collect();
+            for cid in condition_ids {
+                data.watcher_conditions.remove(&cid);
             }
-        } else {
-            return Err(StorageError::NotFound("Watcher group not found".to_string()));
+
+            // 워처 삭제
+            for wid in watcher_ids {
+                data.watchers.remove(&wid);
+            }
+
+            // 그룹 삭제
+            data.watcher_groups.remove(&group_id);
         }
-        
-        // 그룹 삭제
-        data.watcher_groups.remove(&group_id);
-        
+
         Ok(())
     }
     
@@ -565,49 +586,7 @@ impl Storage for MemoryStorage {
         Ok(None)
     }
     
-    /// 워처 생성
-    async fn create_watcher(&self, account_hash: &str, group_id: i32, folder: &str, is_recursive: bool, timestamp: i64) -> crate::storage::Result<i32> {
-        // Normalize folder path to preserve tilde (~) prefix for home directory
-        let normalized_folder = crate::utils::helpers::normalize_path_preserve_tilde(folder);
-        
-        let mut data = self.data.lock().await;
-        
-        // 새 워처 ID 생성
-        let next_id = data.watchers.keys().max().map_or(1, |id| id + 1);
-        
-        // 간단한 워처 구조체 생성 (실제 구현에서는 더 복잡할 수 있음)
-        let watcher = crate::models::watcher::Watcher {
-            id: next_id,
-            watcher_id: 1, // 기본 워처 ID
-            account_hash: account_hash.to_string(),
-            group_id,
-            local_group_id: group_id, // 클라이언트 측 local_group_id 추가
-            title: format!("Watcher {}", next_id),
-            folder: normalized_folder,
-            union_conditions: vec![],
-            subtracting_conditions: vec![],
-            recursive_path: is_recursive,
-            preset: false,
-            custom_type: "default".to_string(),
-            update_mode: "auto".to_string(),
-            is_active: true,
-            extra_json: "{}".to_string(),
-            created_at: chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| chrono::Utc::now()),
-            updated_at: chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| chrono::Utc::now()),
-        };
-        
-        // 데이터 저장
-        data.watchers.insert(next_id, watcher);
-        
-        // 해당 그룹에 워처 ID 추가
-        if let Some(group) = data.watcher_groups.get_mut(&group_id) {
-            if !group.watcher_ids.contains(&next_id) {
-                group.watcher_ids.push(next_id);
-            }
-        }
-        
-        Ok(next_id)
-    }
+    // removed: create_watcher without conditions (use create_watcher_with_conditions instead)
 
     /// 워처 생성 (conditions 포함)
     async fn create_watcher_with_conditions(&self, account_hash: &str, group_id: i32, watcher_data: &crate::sync::WatcherData, timestamp: i64) -> crate::storage::Result<i32> {
@@ -908,20 +887,7 @@ impl Storage for MemoryStorage {
         Ok(Some((server_group_id, server_watcher_id)))
     }
 
-    // WatcherPreset 관련 메서드들
-    async fn register_watcher_presets(&self, account_hash: &str, presets: Vec<String>) -> crate::storage::Result<()> {
-        self.register_watcher_preset_proto(account_hash, "", presets).await
-    }
-    
-    async fn get_watcher_presets(&self, account_hash: &str) -> crate::storage::Result<Vec<String>> {
-        self.get_watcher_preset(account_hash).await
-    }
-    
-    async fn delete_watcher_presets(&self, account_hash: &str) -> crate::storage::Result<()> {
-        let mut data = self.data.lock().await;
-        data.watcher_presets.remove(account_hash);
-        Ok(())
-    }
+    // Removed legacy WatcherPreset aliases (use proto-based methods only)
     
     // WatcherCondition 관련 메서드들
     async fn register_watcher_condition(&self, account_hash: &str, condition: &crate::models::watcher::WatcherCondition) -> crate::storage::Result<i64> {

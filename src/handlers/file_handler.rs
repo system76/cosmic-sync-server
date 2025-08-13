@@ -364,8 +364,9 @@ impl FileHandler {
         let file_id = req.file_id;
         
         // Verify authentication
-        if let Err(_) = auth::verify_auth_token(&self.app_state.oauth, &req.auth_token, &req.account_hash).await {
-            return Ok(Response::new(response::file_download_error("Authentication failed")));
+        match self.app_state.oauth.verify_token(&req.auth_token).await {
+            Ok(v) if v.valid => {},
+            _ => return Ok(Response::new(response::file_download_error("Authentication failed"))),
         }
         
         // Get file info
@@ -416,12 +417,15 @@ impl FileHandler {
                req.account_hash, req.device_hash, req.group_id, req.upload_time_from);
         
         // Verify authentication
-        if let Err(_) = auth::verify_auth_token(&self.app_state.oauth, &req.auth_token, &req.account_hash).await {
-            return Ok(Response::new(ListFilesResponse {
-                success: false,
-                files: Vec::new(),
-                return_message: "Authentication failed".to_string(),
-            }));
+        match self.app_state.oauth.verify_token(&req.auth_token).await {
+            Ok(v) if v.valid => {},
+            _ => {
+                return Ok(Response::new(ListFilesResponse {
+                    success: false,
+                    files: Vec::new(),
+                    return_message: "Authentication failed".to_string(),
+                }));
+            }
         }
         
         // Convert client group_id to server group_id
@@ -554,8 +558,9 @@ impl FileHandler {
         info!("   revision: {}", req.revision);
         
         // Verify authentication
-        if let Err(_) = auth::verify_auth_token(&self.app_state.oauth, &req.auth_token, &req.account_hash).await {
-            return Ok(Response::new(response::file_delete_error("Authentication failed")));
+        match self.app_state.oauth.verify_token(&req.auth_token).await {
+            Ok(v) if v.valid => {},
+            _ => return Ok(Response::new(response::file_delete_error("Authentication failed"))),
         }
         
         // Find file ID
@@ -644,14 +649,17 @@ impl FileHandler {
                req.account_hash, req.file_path, req.file_name);
         
         // Verify authentication
-        if let Err(_) = auth::verify_auth_token(&self.app_state.oauth, &req.auth_token, &req.account_hash).await {
-            return Ok(Response::new(FindFileResponse {
-                success: false,
-                return_message: "Authentication failed".to_string(),
-                file_id: 0,
-                revision: 0,
-                file_info: None,
-            }));
+        match self.app_state.oauth.verify_token(&req.auth_token).await {
+            Ok(v) if v.valid => {},
+            _ => {
+                return Ok(Response::new(FindFileResponse {
+                    success: false,
+                    return_message: "Authentication failed".to_string(),
+                    file_id: 0,
+                    revision: 0,
+                    file_info: None,
+                }));
+            }
         }
         
         // Convert client IDs to server IDs
@@ -757,13 +765,16 @@ impl FileHandler {
         debug!("CheckFileExists request: account={}, file_id={}", req.account_hash, req.file_id);
         
         // Verify authentication
-        if let Err(_) = auth::verify_auth_token(&self.app_state.oauth, &req.auth_token, &req.account_hash).await {
-            return Ok(Response::new(CheckFileExistsResponse {
-                success: false,
-                exists: false,
-                is_deleted: false,
-                return_message: "Authentication failed".to_string(),
-            }));
+        match self.app_state.oauth.verify_token(&req.auth_token).await {
+            Ok(v) if v.valid => {},
+            _ => {
+                return Ok(Response::new(CheckFileExistsResponse {
+                    success: false,
+                    exists: false,
+                    is_deleted: false,
+                    return_message: "Authentication failed".to_string(),
+                }));
+            }
         }
 
         // Check file existence

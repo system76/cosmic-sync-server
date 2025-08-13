@@ -307,10 +307,7 @@ pub trait Storage: Sync + Send {
     async fn update_watcher_group(&self, account_hash: &str, watcher_group: &WatcherGroup) -> Result<()>;
     async fn delete_watcher_group(&self, account_hash: &str, group_id: i32) -> Result<()>;
     
-    // WatcherPreset related methods
-    async fn register_watcher_presets(&self, account_hash: &str, presets: Vec<String>) -> Result<()>;
-    async fn get_watcher_presets(&self, account_hash: &str) -> Result<Vec<String>>;
-    async fn delete_watcher_presets(&self, account_hash: &str) -> Result<()>;
+    // WatcherPreset related methods (proto-based only)
     
     // WatcherCondition related methods
     async fn register_watcher_condition(&self, account_hash: &str, condition: &WatcherCondition) -> Result<i64>;
@@ -331,7 +328,6 @@ pub trait Storage: Sync + Send {
     // Extended watcher methods
     async fn get_watcher_group_by_account_and_id(&self, account_hash: &str, group_id: i32) -> Result<Option<WatcherGroupData>>;
     async fn find_watcher_by_folder(&self, account_hash: &str, group_id: i32, folder: &str) -> Result<Option<i32>>;
-    async fn create_watcher(&self, account_hash: &str, group_id: i32, folder: &str, is_recursive: bool, timestamp: i64) -> Result<i32>;
     async fn create_watcher_with_conditions(&self, account_hash: &str, group_id: i32, watcher_data: &WatcherData, timestamp: i64) -> Result<i32>;
     async fn get_watcher_by_group_and_id(&self, account_hash: &str, group_id: i32, watcher_id: i32) -> Result<Option<WatcherData>>;
     async fn get_watcher_preset(&self, account_hash: &str) -> Result<Vec<String>>;

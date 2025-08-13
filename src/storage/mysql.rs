@@ -776,9 +776,7 @@ impl Storage for MySqlStorage {
         <Self as MySqlWatcherExt>::find_watcher_by_folder(self, account_hash, group_id, folder).await
     }
 
-    async fn create_watcher(&self, account_hash: &str, group_id: i32, folder: &str, is_recursive: bool, timestamp: i64) -> crate::storage::Result<i32> {
-        <Self as MySqlWatcherExt>::create_watcher(self, account_hash, group_id, folder, is_recursive, timestamp).await
-    }
+    // removed: create_watcher without conditions (use create_watcher_with_conditions instead)
 
     async fn create_watcher_with_conditions(&self, account_hash: &str, group_id: i32, watcher_data: &crate::sync::WatcherData, timestamp: i64) -> Result<i32> {
         <Self as MySqlWatcherExt>::create_watcher_with_conditions(self, account_hash, group_id, watcher_data, timestamp).await
@@ -854,31 +852,7 @@ impl Storage for MySqlStorage {
         Ok(result)
     }
     
-    // WatcherPreset 관련 메서드들
-    async fn register_watcher_presets(&self, account_hash: &str, presets: Vec<String>) -> Result<()> {
-        // MySqlWatcherExt의 register_watcher_preset_proto를 사용
-        Storage::register_watcher_preset_proto(self, account_hash, "", presets).await
-    }
-    
-    async fn get_watcher_presets(&self, account_hash: &str) -> Result<Vec<String>> {
-        Storage::get_watcher_preset(self, account_hash).await
-    }
-    
-    async fn delete_watcher_presets(&self, account_hash: &str) -> Result<()> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        conn.exec_drop(
-            "DELETE FROM watcher_presets WHERE account_hash = ?",
-            (account_hash,)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to delete watcher presets: {}", e))
-        })?;
-        
-        Ok(())
-    }
+    // Removed legacy WatcherPreset aliases (use proto-based methods only)
     
     // WatcherCondition 관련 메서드들
     async fn register_watcher_condition(&self, account_hash: &str, condition: &WatcherCondition) -> Result<i64> {

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use crate::{
     storage::Storage,
-    services::{AuthService, DeviceService, FileService, WatcherService, EncryptionService},
+    services::{AuthService, DeviceService, FileService, EncryptionService},
     config::settings::Config,
     error::Result,
 };
@@ -21,7 +21,6 @@ pub struct AppContainer {
     auth_service: Arc<AuthService>,
     device_service: Arc<DeviceService>,
     file_service: Arc<FileService>,
-    watcher_service: Arc<WatcherService>,
     encryption_service: Arc<EncryptionService>,
     config: Arc<Config>,
 }
@@ -50,11 +49,6 @@ impl AppContainer {
     /// 파일 서비스 가져오기
     pub fn file_service(&self) -> Arc<FileService> {
         self.file_service.clone()
-    }
-
-    /// 워처 서비스 가져오기
-    pub fn watcher_service(&self) -> Arc<WatcherService> {
-        self.watcher_service.clone()
     }
 
     /// 암호화 서비스 가져오기
@@ -95,7 +89,6 @@ impl AppContainer {
         auth_service: Arc<AuthService>,
         device_service: Arc<DeviceService>,
         file_service: Arc<FileService>,
-        watcher_service: Arc<WatcherService>,
         encryption_service: Arc<EncryptionService>,
         config: Arc<Config>,
     ) -> Self {
@@ -104,7 +97,6 @@ impl AppContainer {
             auth_service,
             device_service,
             file_service,
-            watcher_service,
             encryption_service,
             config,
         }
@@ -125,7 +117,6 @@ pub struct StorageProvider;
 pub struct AuthServiceProvider;
 pub struct DeviceServiceProvider;
 pub struct FileServiceProvider;
-pub struct WatcherServiceProvider;
 pub struct EncryptionServiceProvider;
 
 #[async_trait]
@@ -165,13 +156,7 @@ impl ServiceProvider for FileServiceProvider {
 }
 
 #[async_trait]
-impl ServiceProvider for WatcherServiceProvider {
-    type Service = WatcherService;
-    
-    async fn provide(&self, container: &AppContainer) -> Result<Arc<Self::Service>> {
-        Ok(container.watcher_service())
-    }
-}
+// WatcherService has been removed
 
 #[async_trait]
 impl ServiceProvider for EncryptionServiceProvider {

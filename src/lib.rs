@@ -36,7 +36,7 @@ pub use server::{
 pub use container::{
     AppContainer, ContainerBuilder, ServiceRegistry,
     ServiceProvider, StorageProvider, AuthServiceProvider,
-    DeviceServiceProvider, FileServiceProvider, WatcherServiceProvider,
+    DeviceServiceProvider, FileServiceProvider,
     EncryptionServiceProvider,
 };
 

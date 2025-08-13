@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tracing::{info, instrument};
 use crate::{
     storage::{Storage, init_storage},
-    services::{AuthService, DeviceService, FileService, WatcherService, EncryptionService},
+    services::{AuthService, DeviceService, FileService, EncryptionService},
     config::settings::Config,
     error::Result,
     container::AppContainer,
@@ -64,7 +64,6 @@ impl ContainerBuilder {
             services.auth_service,
             services.device_service,
             services.file_service,
-            services.watcher_service,
             services.encryption_service,
             config,
         );
@@ -82,7 +81,6 @@ impl ContainerBuilder {
         let auth_service = Arc::new(AuthService::new(storage.clone()));
         let device_service = Arc::new(DeviceService::with_storage(storage.clone()));
         let file_service = Arc::new(FileService::with_storage(storage.clone()));
-        let watcher_service = Arc::new(WatcherService::new(storage.clone()));
         let encryption_service = Arc::new(EncryptionService::new(storage.clone()));
 
         info!("✅ All services initialized successfully");
@@ -91,7 +89,6 @@ impl ContainerBuilder {
             auth_service,
             device_service,
             file_service,
-            watcher_service,
             encryption_service,
         })
     }
@@ -108,7 +105,6 @@ struct Services {
     auth_service: Arc<AuthService>,
     device_service: Arc<DeviceService>,
     file_service: Arc<FileService>,
-    watcher_service: Arc<WatcherService>,
     encryption_service: Arc<EncryptionService>,
 }
 

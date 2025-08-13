@@ -2,7 +2,6 @@
 pub mod auth_service;
 pub mod device_service;
 pub mod file_service;
-pub mod watcher_service;
 pub mod encryption_service;
 pub mod version_service;
 
@@ -10,7 +9,6 @@ pub mod version_service;
 pub use auth_service::AuthService;
 pub use device_service::DeviceService;
 pub use file_service::FileService;
-pub use watcher_service::WatcherService;
 pub use encryption_service::EncryptionService;
 pub use version_service::{VersionService, VersionServiceImpl};
 

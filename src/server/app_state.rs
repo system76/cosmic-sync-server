@@ -7,12 +7,12 @@ use crate::storage::mysql_watcher::MySqlWatcherExt;
 use crate::services::encryption_service::EncryptionService;
 use crate::auth::oauth::OAuthService;
 use crate::config::settings::{Config, ServerConfig};
-use crate::services::watcher_service::WatcherService;
 use crate::services::file_service::FileService;
 use crate::services::device_service::DeviceService;
 use crate::services::version_service::{VersionService, VersionServiceImpl};
 use crate::error::AppError;
 use crate::server::notification_manager::NotificationManager;
+use crate::server::event_bus::{EventBus, NoopEventBus};
 use std::sync::Mutex;
 use chrono::{Utc, Duration, DateTime};
 use tokio::sync::RwLock;
@@ -65,8 +65,6 @@ pub struct AppState {
     pub oauth: OAuthService,
     /// Encryption service for handling keys
     pub encryption: EncryptionService,
-    /// Watcher service (directory monitoring, event handling)
-    pub watcher: WatcherService,
     /// File service (file upload, download, synchronization)
     pub file: FileService,
     /// Device service (device registration, management)
@@ -75,6 +73,8 @@ pub struct AppState {
     pub version_service: VersionServiceImpl,
     /// Notification manager for broadcasting events
     pub notification_manager: Arc<NotificationManager>,
+    /// Event bus for cross-instance broadcasting (noop by default)
+    pub event_bus: Arc<dyn EventBus>,
     /// Shared authentication sessions between HTTP and gRPC
     pub auth_sessions: Arc<Mutex<HashMap<String, AuthSession>>>,
     /// Connection handler for managing connections
@@ -147,7 +147,7 @@ impl AppState {
     }
     
     /// initialize storage and other services
-    async fn initialize_services(storage_url: Option<&String>) -> Result<(Arc<dyn Storage>, Arc<NotificationManager>, OAuthService, EncryptionService, WatcherService, FileService, DeviceService, VersionServiceImpl), AppError> {
+    async fn initialize_services(storage_url: Option<&String>) -> Result<(Arc<dyn Storage>, Arc<NotificationManager>, Arc<dyn EventBus>, OAuthService, EncryptionService, FileService, DeviceService, VersionServiceImpl), AppError> {
         // initialize storage
         let storage = match storage_url {
             Some(url) => Self::initialize_storage(url).await?,
@@ -165,9 +165,9 @@ impl AppState {
         
         // initialize encryption service
         let encryption = EncryptionService::new(storage.clone());
-        
-        // initialize watcher service
-        let watcher = WatcherService::with_storage(storage.clone());
+
+        // initialize event bus (injected, noop by default)
+        let event_bus: Arc<dyn EventBus> = Arc::new(NoopEventBus::default());
         
         // initialize file storage (load from settings)
         let file_storage = Self::initialize_file_storage().await?;
@@ -185,7 +185,7 @@ impl AppState {
         // initialize version service
         let version_service = VersionServiceImpl::new(storage.clone(), file.clone());
         
-        Ok((storage, notification_manager, oauth, encryption, watcher, file, device, version_service))
+        Ok((storage, notification_manager, event_bus, oauth, encryption, file, device, version_service))
     }
     
     /// initialize file storage
@@ -258,8 +258,7 @@ impl AppState {
         // initialize encryption service
         let encryption = EncryptionService::new(storage.clone());
 
-        // initialize watcher service
-        let watcher = WatcherService::with_storage(storage.clone());
+        // watcher service removed; handlers call storage directly
 
         // initialize file storage with existing storage context
         let file_storage = Self::initialize_file_storage_with_storage(storage.clone()).await?;
@@ -277,16 +276,19 @@ impl AppState {
         // initialize version service
         let version_service = VersionServiceImpl::new(storage.clone(), file.clone());
 
+        // initialize event bus (noop by default)
+        let event_bus: Arc<dyn EventBus> = Arc::new(NoopEventBus::default());
+
         Ok(Self {
             config: full_config,
             storage,
             oauth,
             encryption,
-            watcher,
             file,
             device,
             version_service,
             notification_manager,
+            event_bus,
             auth_sessions: Arc::new(Mutex::new(HashMap::new())),
             connection_handler: Arc::new(RwLock::new(ConnectionHandler::new())),
             connection_tracker: Arc::new(ConnectionTracker::new()),
@@ -296,7 +298,7 @@ impl AppState {
 
     /// Create a new application state with given configuration
     pub async fn new(config: &Config) -> Result<Self, AppError> {
-        let (storage, notification_manager, oauth, encryption, watcher, file, device, version_service) = 
+        let (storage, notification_manager, event_bus, oauth, encryption, file, device, version_service) = 
             Self::initialize_services(config.server.storage_path.as_ref()).await?;
         
         Ok(Self {
@@ -304,11 +306,11 @@ impl AppState {
             storage,
             oauth,
             encryption,
-            watcher,
             file,
             device,
             version_service,
             notification_manager,
+            event_bus,
             auth_sessions: Arc::new(Mutex::new(HashMap::new())),
             connection_handler: Arc::new(RwLock::new(ConnectionHandler::new())),
             connection_tracker: Arc::new(ConnectionTracker::new()),
@@ -327,7 +329,7 @@ impl AppState {
             storage: crate::config::settings::StorageConfig::default(),
         };
         
-        let (storage, notification_manager, oauth, encryption, watcher, file, device, version_service) = 
+        let (storage, notification_manager, event_bus, oauth, encryption, file, device, version_service) = 
             Self::initialize_services(config.storage_path.as_ref()).await?;
         
         // create AppState object
@@ -336,11 +338,11 @@ impl AppState {
             storage,
             oauth,
             encryption,
-            watcher,
             file,
             device,
             version_service,
             notification_manager,
+            event_bus,
             auth_sessions: Arc::new(Mutex::new(HashMap::new())),
             connection_handler: Arc::new(RwLock::new(ConnectionHandler::new())),
             connection_tracker: Arc::new(ConnectionTracker::new()),
@@ -441,6 +443,11 @@ impl AppState {
         ).await {
             error!("Failed to broadcast WatcherGroup update: {}", e);
         }
+        // Publish to cross-instance bus (noop by default)
+        let routing_key = format!("watcher.group.update.{}", account_hash);
+        if let Err(e) = self.event_bus.publish(&routing_key, Vec::new()).await {
+            debug!("EventBus publish failed (noop or disconnected): {}", e);
+        }
         
         Ok(())
     }
@@ -471,6 +478,11 @@ impl AppState {
             notification
         ).await {
             error!("Failed to broadcast WatcherPreset update: {}", e);
+        }
+        // Publish to cross-instance bus (noop by default)
+        let routing_key = format!("watcher.preset.update.{}", account_hash);
+        if let Err(e) = self.event_bus.publish(&routing_key, Vec::new()).await {
+            debug!("EventBus publish failed (noop or disconnected): {}", e);
         }
         
         Ok(())

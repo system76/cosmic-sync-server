@@ -36,9 +36,6 @@ pub trait MySqlWatcherExt {
     /// 폴더 경로로 워처 찾기
     async fn find_watcher_by_folder(&self, account_hash: &str, group_id: i32, folder: &str) -> Result<Option<i32>>;
     
-    /// 워처 생성
-    async fn create_watcher(&self, account_hash: &str, group_id: i32, folder: &str, is_recursive: bool, timestamp: i64) -> Result<i32>;
-    
     /// 워처 생성 (conditions 포함)
     async fn create_watcher_with_conditions(&self, account_hash: &str, group_id: i32, watcher_data: &crate::sync::WatcherData, timestamp: i64) -> Result<i32>;
     
@@ -456,21 +453,66 @@ impl MySqlWatcherExt for MySqlStorage {
         Ok(())
     }
     
-    /// 워처 그룹 삭제
+    /// 워처 그룹 삭제 (연관 워처/조건 포함 정리)
     async fn delete_watcher_group(&self, account_hash: &str, group_id: i32) -> Result<()> {
         let pool = self.get_pool();
         let mut conn = pool.get_conn().await.map_err(|e| {
             StorageError::Database(format!("Failed to get connection: {}", e))
         })?;
         
-        // account_hash와 클라이언트 group_id를 모두 확인하여 삭제
-        conn.exec_drop(
-            "DELETE FROM watcher_groups WHERE group_id = ? AND account_hash = ?",
-            (group_id, account_hash)
+        // 트랜잭션 시작 (직렬화 수준으로 경합 최소화)
+        conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE").await.map_err(|e| {
+            StorageError::Database(format!("Failed to set session isolation level: {}", e))
+        })?;
+        let mut tx = conn.start_transaction(TxOpts::default()).await.map_err(|e| {
+            StorageError::Database(format!("Failed to start transaction: {}", e))
+        })?;
+
+        // 서버 그룹 ID 조회 (watchers는 서버 그룹 ID를 FK로 사용)
+        let server_group_id_opt: Option<(i32,)> = tx.exec_first(
+            "SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?",
+            (account_hash, group_id)
+        ).await.map_err(|e| {
+            StorageError::Database(format!("Failed to select watcher_group id: {}", e))
+        })?;
+
+        let server_group_id = match server_group_id_opt {
+            Some((id,)) => id,
+            None => {
+                // 그룹이 이미 없으면 작업 없음
+                tx.commit().await.map_err(|e| StorageError::Database(format!("Failed to commit transaction: {}", e)))?;
+                return Ok(());
+            }
+        };
+
+        // 관련 조건 삭제 (FK ON DELETE CASCADE가 있어도 안전하게 선제 정리)
+        tx.exec_drop(
+            r"DELETE FROM watcher_conditions 
+              WHERE watcher_id IN (
+                SELECT id FROM watchers WHERE account_hash = ? AND group_id = ?
+              )",
+            (account_hash, server_group_id)
+        ).await.map_err(|e| {
+            StorageError::Database(format!("Failed to delete watcher conditions: {}", e))
+        })?;
+
+        // 관련 워처 삭제
+        tx.exec_drop(
+            "DELETE FROM watchers WHERE account_hash = ? AND group_id = ?",
+            (account_hash, server_group_id)
+        ).await.map_err(|e| {
+            StorageError::Database(format!("Failed to delete watchers: {}", e))
+        })?;
+
+        // 그룹 삭제 (서버 그룹 ID 기준)
+        tx.exec_drop(
+            "DELETE FROM watcher_groups WHERE id = ? AND account_hash = ?",
+            (server_group_id, account_hash)
         ).await.map_err(|e| {
             StorageError::Database(format!("Failed to delete watcher group: {}", e))
         })?;
         
+        tx.commit().await.map_err(|e| StorageError::Database(format!("Failed to commit transaction: {}", e)))?;
         Ok(())
     }
     
@@ -661,152 +703,7 @@ impl MySqlWatcherExt for MySqlStorage {
         }
     }
 
-    /// 워처 생성
-    async fn create_watcher(&self, account_hash: &str, group_id: i32, folder: &str, is_recursive: bool, timestamp: i64) -> Result<i32> {
-        // Normalize folder path to preserve tilde (~) prefix for home directory
-        let normalized_folder = helpers::normalize_path_preserve_tilde(folder);
-        debug!("Creating new watcher: account={}, group_id={}, original_folder={}, normalized_folder={}, is_recursive={}", 
-               account_hash, group_id, folder, normalized_folder, is_recursive);
-        
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            error!("Failed to get connection: {}", e);
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-
-        // SERIALIZABLE isolation level로 세션 설정 후 트랜잭션 시작
-        conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE").await.map_err(|e| {
-            error!("Failed to set session isolation level: {}", e);
-            StorageError::Database(format!("Failed to set session isolation level: {}", e))
-        })?;
-        
-        let mut tx = conn.start_transaction(TxOpts::default()).await.map_err(|e| {
-            error!("Failed to start transaction: {}", e);
-            StorageError::Database(format!("Failed to start transaction: {}", e))
-        })?;
-
-        // 워처 등록
-        let folder_name = normalized_folder.split('/').last().unwrap_or("Watcher").to_string();
-        let title = format!("Watcher for {}", folder_name);
-
-        // 클라이언트 group_id로부터 서버 DB의 watcher_groups.id를 가져옴 (watchers 테이블 FK 제약조건 때문)
-        let db_group_id: Option<(i32,)> = tx.exec_first(
-            "SELECT id FROM watcher_groups WHERE group_id = ? AND account_hash = ?",
-            (group_id, account_hash)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to get DB group ID: {}", e))
-        })?;
-        
-        let db_group_id = match db_group_id {
-            Some((id,)) => id,
-            None => {
-                error!("Watcher group not found for client group_id: {}", group_id);
-                if let Err(rollback_err) = tx.rollback().await {
-                    error!("Failed to rollback transaction: {}", rollback_err);
-                }
-                return Err(StorageError::NotFound(format!("Watcher group {} not found", group_id)));
-            }
-        };
-
-        // 워처 삽입 전에 watcher_group이 정말로 존재하는지 최종 확인
-        debug!("Final verification: Checking if watcher_group {} really exists before creating watcher", db_group_id);
-        let final_check: Option<(i32,)> = tx.exec_first(
-            "SELECT id FROM watcher_groups WHERE id = ? AND account_hash = ?",
-            (db_group_id, account_hash)
-        ).await.map_err(|e| {
-            error!("Failed to verify watcher_group existence: {}", e);
-            StorageError::Database(format!("Failed to verify watcher_group existence: {}", e))
-        })?;
-        
-        if final_check.is_none() {
-            error!("Critical error: watcher_group {} disappeared before watcher creation", db_group_id);
-            if let Err(rollback_err) = tx.rollback().await {
-                error!("Failed to rollback transaction: {}", rollback_err);
-            }
-            return Err(StorageError::Database(format!("Watcher group {} disappeared before watcher creation", db_group_id)));
-        }
-        
-        debug!("Watcher group {} confirmed to exist, proceeding with watcher creation", db_group_id);
-
-        debug!("Inserting watcher with title: {} (no watcher_id available)", title);
-        // 워처 삽입 시도 - 이 메서드는 watcher_id를 알 수 없으므로 0으로 설정 (deprecated 예정)
-        let result = tx.exec_drop(
-            r"INSERT INTO watchers (
-                watcher_id, account_hash, group_id, local_group_id, folder, title,
-                is_recursive, created_at, updated_at, 
-                is_active, extra_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                0, // watcher_id를 알 수 없으므로 0으로 설정
-                account_hash,
-                db_group_id,  // 서버 DB group ID (FK 제약조건)
-                group_id,     // 클라이언트 측 local_group_id (동기화용)
-                &normalized_folder,  // 정규화된 경로 사용
-                &title,
-                is_recursive,
-                timestamp,
-                timestamp,
-                true,  // is_active 기본값
-                "{}"   // extra_json 기본값
-            ),
-        ).await;
-
-        // 삽입에 실패한 경우 롤백 후 오류 반환
-        if let Err(e) = result {
-            error!("Failed to insert watcher: {}", e);
-            if let Err(rollback_err) = tx.rollback().await {
-                error!("Failed to rollback transaction: {}", rollback_err);
-            }
-            return Err(StorageError::Database(format!("Failed to insert watcher: {}", e)));
-        }
-
-        // 생성된 ID 조회
-        let id_result = tx.exec_first::<(i32,), _, _>(
-            "SELECT LAST_INSERT_ID()",
-            ()
-        ).await;
-
-        let new_id = match id_result {
-            Ok(Some((id,))) => {
-                debug!("Got last insert ID: {}", id);
-                id
-            },
-            Ok(None) => {
-                error!("Failed to get last insert ID: No ID returned");
-                if let Err(rollback_err) = tx.rollback().await {
-                    error!("Failed to rollback transaction: {}", rollback_err);
-                }
-                return Err(StorageError::Database("Failed to create watcher: No ID returned".to_string()));
-            },
-            Err(e) => {
-                error!("Failed to get last insert ID: {}", e);
-                if let Err(rollback_err) = tx.rollback().await {
-                    error!("Failed to rollback transaction: {}", rollback_err);
-                }
-                return Err(StorageError::Database(format!("Failed to get last insert ID: {}", e)));
-            }
-        };
-
-        if new_id == 0 {
-            error!("Failed to create watcher: Invalid ID (0)");
-            if let Err(rollback_err) = tx.rollback().await {
-                error!("Failed to rollback transaction: {}", rollback_err);
-            }
-            return Err(StorageError::Database("Failed to create watcher: Invalid ID".to_string()));
-        }
-
-        // group_watchers 테이블 사용하지 않음 - watchers 테이블의 group_id로 직접 관리
-
-        debug!("Committing transaction for watcher creation");
-        // 트랜잭션 커밋
-        if let Err(e) = tx.commit().await {
-            error!("Failed to commit transaction: {}", e);
-            return Err(StorageError::Database(format!("Failed to commit transaction: {}", e)));
-        }
-
-        debug!("Created new watcher ID {} for normalized folder {} in group {}", new_id, normalized_folder, group_id);
-        Ok(new_id)
-    }
+    // removed: create_watcher without conditions (use create_watcher_with_conditions instead)
 
     /// 워처 생성 (conditions 포함)
     async fn create_watcher_with_conditions(&self, account_hash: &str, group_id: i32, watcher_data: &crate::sync::WatcherData, timestamp: i64) -> Result<i32> {

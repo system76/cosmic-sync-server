@@ -3,6 +3,7 @@ pub mod http;
 pub mod startup;
 pub mod app_state;
 pub mod notification_manager;
+pub mod event_bus;
 pub mod connection_handler;
 pub mod connection_tracker;
 pub mod connection_cleanup;
