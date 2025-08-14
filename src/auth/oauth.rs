@@ -181,7 +181,7 @@ impl OAuthService {
     async fn get_user_info_from_external_server(&self, token: &str) -> Result<OAuthUserInfo> {
         let client = Client::new();
         let auth_server_url = std::env::var("AUTH_SERVER_URL")
-            .unwrap_or_else(|_| "http://10.17.89.63:4000".to_string());
+            .unwrap_or_else(|_| "http://localhost:4000".to_string());
         
         // 응답 상태 코드에 따른 오류 처리 개선
         let response = match client
@@ -220,7 +220,10 @@ impl OAuthService {
                     return Err(AuthError::UserNotFound("User not found or not available".to_string()));
                 }
                 
-                let user = settings.user.as_ref().unwrap();
+                let user = match settings.user.as_ref() {
+                    Some(u) => u,
+                    None => return Err(AuthError::UserNotFound("User not found or not available".to_string())),
+                };
                 
                 // 필수 필드가 모두 있는지 확인
                 let user_id = user.email.clone()
@@ -309,7 +312,7 @@ impl OAuthService {
                         // Account doesn't exist in local DB, try to fetch from external auth server
                         info!("🔄 Account not found in local DB, attempting to fetch from external auth server: account_hash={}", account_hash);
                         
-                        // Try to get user info from external auth server using the token
+        // Try to get user info from external auth server using the token
                         match self.get_user_info_from_external_server(token).await {
                             Ok(user_info) => {
                                 // Create account in local DB
@@ -338,14 +341,8 @@ impl OAuthService {
                                     last_login: now,
                                 };
                                 
-                                match self.storage.create_account(&new_account).await {
-                                    Ok(_) => {
-                                        info!("✅ Account auto-created from external auth server: account_hash={}", account_hash);
-                                    },
-                                    Err(e) => {
-                                        error!("❌ Failed to auto-create account: {}", e);
-                                        // 계속 진행 - 계정은 외부 서버에 있을 수 있음
-                                    }
+                                if let Err(e) = self.storage.create_account(&new_account).await {
+                                    error!("❌ Failed to auto-create account: {}", e);
                                 }
                             },
                             Err(e) => {

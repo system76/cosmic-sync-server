@@ -1,5 +1,5 @@
 use chrono::prelude::*;
-use mysql_async::prelude::*;
+// migrated to sqlx; removed mysql_async
 use tracing::{debug, error, info};
 
 use crate::models::account::Account;
@@ -30,21 +30,12 @@ pub trait MySqlAccountExt {
 impl MySqlAccountExt for MySqlStorage {
     /// 계정 생성
     async fn create_account(&self, account: &Account) -> Result<()> {
-        let pool = self.get_pool();
-        
         // 재시도 로직을 위한 루프
         let mut retry_count = 0;
         let max_retries = 2;
         
         loop {
-            // 트랜잭션 시작
-            let mut conn = pool.get_conn().await.map_err(|e| {
-                error!("MySQL connection failed: {}", e);
-                StorageError::Database(format!("Failed to get connection: {}", e))
-            })?;
-            
-            // 트랜잭션 시작
-            conn.query_drop("START TRANSACTION").await.map_err(|e| {
+            let mut tx = self.get_sqlx_pool().begin().await.map_err(|e| {
                 error!("Failed to start transaction: {}", e);
                 StorageError::Database(format!("Failed to start transaction: {}", e))
             })?;
@@ -53,44 +44,40 @@ impl MySqlAccountExt for MySqlStorage {
                   account.account_hash, account.email);
             
             // 계정 정보 삽입
-            match conn.exec_drop(
-                r"INSERT INTO accounts (
+            match sqlx::query(
+                r#"INSERT INTO accounts (
                     id, account_hash, email, name, 
                     password_hash, salt, created_at, updated_at, 
                     last_login, is_active
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    &account.id,
-                    &account.account_hash,
-                    &account.email,
-                    &account.name,
-                    &account.password_hash,
-                    &account.salt,
-                    account.created_at.timestamp(),
-                    account.updated_at.timestamp(),
-                    account.last_login.timestamp(),
-                    account.is_active,
-                ),
-            ).await {
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+            )
+            .bind(&account.id)
+            .bind(&account.account_hash)
+            .bind(&account.email)
+            .bind(&account.name)
+            .bind(&account.password_hash)
+            .bind(&account.salt)
+            .bind(account.created_at.timestamp())
+            .bind(account.updated_at.timestamp())
+            .bind(account.last_login.timestamp())
+            .bind(account.is_active)
+            .execute(&mut *tx)
+            .await {
                 Ok(_) => {
                     info!("✅ Account created successfully in database: account_hash={}", account.account_hash);
                     
                     // 트랜잭션 커밋
-                    match conn.query_drop("COMMIT").await {
+                    match tx.commit().await {
                         Ok(_) => {
                             info!("✅ Transaction committed successfully");
                             
                             // 새로운 연결을 사용하여 데이터베이스에 실제로 저장되었는지 확인
-                            let mut verify_conn = pool.get_conn().await.map_err(|e| {
-                                error!("❌ Failed to get connection for verification: {}", e);
-                                StorageError::Connection(format!("Failed to get connection for verification: {}", e))
-                            })?;
-                            
-                            // 명시적인 SELECT 쿼리로 계정 조회
-                            match verify_conn.exec_first::<(String, String, String, String, i64, i64, i64, bool), _, _>(
-                                "SELECT account_hash, email, name, id, created_at, updated_at, last_login, is_active FROM accounts WHERE account_hash = ?",
-                                (&account.account_hash,)
-                            ).await {
+                            match sqlx::query_as::<_, (String, String, String, String, i64, i64, i64, bool)>(
+                                r#"SELECT account_hash, email, name, id, created_at, updated_at, last_login, is_active FROM accounts WHERE account_hash = ?"#
+                            )
+                            .bind(&account.account_hash)
+                            .fetch_optional(self.get_sqlx_pool())
+                            .await {
                                 Ok(Some((db_hash, db_email, db_name, db_id, db_created, db_updated, db_login, db_active))) => {
                                     info!("✅ Verified account exists in database with explicit query");
                                     info!("✅ Account details: hash={}, email={}, name={}, id={}, created_at={}, updated_at={}, last_login={}, is_active={}",
@@ -107,9 +94,7 @@ impl MySqlAccountExt for MySqlStorage {
                         Err(e) => {
                             error!("❌ Failed to commit transaction: {}", e);
                             // 롤백 시도
-                            if let Err(e) = conn.query_drop("ROLLBACK").await {
-                                error!("❌ Failed to rollback transaction: {}", e);
-                            }
+                            // Note: tx is already consumed after failed commit in sqlx; we cannot rollback here
                             return Err(StorageError::Database(format!("Failed to commit transaction: {}", e)));
                         }
                     }
@@ -118,11 +103,9 @@ impl MySqlAccountExt for MySqlStorage {
                 },
                 Err(e) => {
                     error!("❌ Failed to insert account into database: {}", e);
-                    
                     // 롤백
-                    if let Err(e) = conn.query_drop("ROLLBACK").await {
-                        error!("❌ Failed to rollback transaction: {}", e);
-                    }
+                    // Attempt rollback
+                    let _ = tx.rollback().await;
                     
                     // 실패 원인 분석
                     if e.to_string().contains("Duplicate entry") {
@@ -137,12 +120,12 @@ impl MySqlAccountExt for MySqlStorage {
                     }
                     
                     // 테이블 존재 여부 확인
-                    match conn.query_drop("SHOW TABLES LIKE 'accounts'").await {
+                    match sqlx::query(r#"SHOW TABLES LIKE 'accounts'"#).execute(self.get_sqlx_pool()).await {
                         Ok(_) => {
                             info!("✅ accounts 테이블이 존재함");
                             
                             // 테이블 구조 확인
-                            match conn.query_drop("DESCRIBE accounts").await {
+                            match sqlx::query(r#"DESCRIBE accounts"#).execute(self.get_sqlx_pool()).await {
                                 Ok(_) => {
                                     info!("✅ accounts 테이블 구조 확인됨");
                                 },
@@ -174,7 +157,7 @@ impl MySqlAccountExt for MySqlStorage {
                                 is_active BOOLEAN NOT NULL DEFAULT TRUE
                             )";
                             
-                            match conn.query_drop(create_accounts_table).await {
+                            match sqlx::query(create_accounts_table).execute(self.get_sqlx_pool()).await {
                                 Ok(_) => {
                                     info!("✅ accounts 테이블 생성 성공, 계정 생성 재시도");
                                     // 다음 반복에서 다시 시도
@@ -206,26 +189,20 @@ impl MySqlAccountExt for MySqlStorage {
     
     /// 이메일로 계정 조회
     async fn get_account_by_email(&self, email: &str) -> Result<Option<Account>> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            error!("MySQL connection failed: {}", e);
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
         info!("🔍 Looking up account by email: {}", email);
         
-        // email로 계정 조회
-        let account: Option<(String, String, String, String, String, String, i64, i64, i64, bool)> = conn.exec_first(
-            r"SELECT 
+        // email로 계정 조회 (sqlx)
+        let account: Option<(String, String, String, String, String, String, i64, i64, i64, bool)> = sqlx::query_as(
+            r#"SELECT 
                 account_hash, id, email, name, password_hash, salt, 
                 created_at, updated_at, last_login, is_active 
               FROM accounts 
-              WHERE email = ?",
-            (email,)
-        ).await.map_err(|e| {
-            error!("❌ Failed to query account by email: {}", e);
-            StorageError::Database(format!("Failed to query account by email: {}", e))
-        })?;
+              WHERE email = ?"#
+        )
+        .bind(email)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| { error!("❌ Failed to query account by email: {}", e); StorageError::Database(format!("Failed to query account by email: {}", e)) })?;
         
         if let Some((account_hash, id, email, name, password_hash, salt, created_at, updated_at, last_login, is_active)) = account {
             info!("✅ Found account by email: {}, account_hash={}", email, account_hash);
@@ -262,22 +239,18 @@ impl MySqlAccountExt for MySqlStorage {
     
     /// 해시로 계정 조회
     async fn get_account_by_hash(&self, account_hash: &str) -> Result<Option<Account>> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        // account_hash로 계정 조회
-        let account: Option<(String, String, String, String, String, String, i64, i64, i64, bool)> = conn.exec_first(
-            r"SELECT 
+        // account_hash로 계정 조회 (sqlx)
+        let account: Option<(String, String, String, String, String, String, i64, i64, i64, bool)> = sqlx::query_as(
+            r#"SELECT 
                 account_hash, id, email, name, password_hash, salt, 
                 created_at, updated_at, last_login, is_active 
               FROM accounts 
-              WHERE account_hash = ?",
-            (account_hash,)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to query account: {}", e))
-        })?;
+              WHERE account_hash = ?"#
+        )
+        .bind(account_hash)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to query account: {}", e)))?;
         
         if let Some((account_hash, id, email, name, password_hash, salt, created_at, updated_at, last_login, is_active)) = account {
             // 각 필드 값을 사용하여 Account 객체 생성
@@ -311,14 +284,9 @@ impl MySqlAccountExt for MySqlStorage {
     
     /// 계정 업데이트
     async fn update_account(&self, account: &Account) -> Result<()> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        // 계정 정보 업데이트
-        conn.exec_drop(
-            r"UPDATE accounts SET 
+        // 계정 정보 업데이트 (sqlx)
+        sqlx::query(
+            r#"UPDATE accounts SET 
                 name = ?, 
                 email = ?, 
                 password_hash = ?, 
@@ -326,20 +294,19 @@ impl MySqlAccountExt for MySqlStorage {
                 updated_at = ?, 
                 last_login = ?, 
                 is_active = ?
-              WHERE account_hash = ?",
-            (
-                &account.name,
-                &account.email,
-                &account.password_hash,
-                &account.salt,
-                account.updated_at.timestamp(),
-                account.last_login.timestamp(),
-                account.is_active,
-                &account.account_hash,
-            ),
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to update account: {}", e))
-        })?;
+              WHERE account_hash = ?"#
+        )
+        .bind(&account.name)
+        .bind(&account.email)
+        .bind(&account.password_hash)
+        .bind(&account.salt)
+        .bind(account.updated_at.timestamp())
+        .bind(account.last_login.timestamp())
+        .bind(account.is_active)
+        .bind(&account.account_hash)
+        .execute(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to update account: {}", e)))?;
         
         Ok(())
     }

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::StreamExt;
 use tonic::{Request, Response, Status};
 use futures::FutureExt;
 use crate::sync::{
@@ -635,18 +636,20 @@ impl WatcherHandler {
         }
         
         // 3. get latest server state
-        let server_watcher_groups = self.app_state.storage.get_watcher_groups(&account_hash).await
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|group| {
-                // Convert to WatcherGroupData
-                self.app_state.storage
-                    .get_watcher_group_by_account_and_id(&account_hash, group.group_id)
-                    .now_or_never()
-                    .and_then(|result| result.ok())
-                    .flatten()
-            })
-            .collect();
+        let server_groups = self.app_state.storage.get_watcher_groups(&account_hash).await
+            .unwrap_or_default();
+        let mut tasks = futures::stream::FuturesUnordered::new();
+        for group in server_groups.into_iter() {
+            let storage = self.app_state.storage.clone();
+            let account = account_hash.clone();
+            tasks.push(async move {
+                storage.get_watcher_group_by_account_and_id(&account, group.group_id).await.ok().flatten()
+            });
+        }
+        let mut server_watcher_groups = Vec::new();
+        while let Some(item) = tasks.next().await {
+            if let Some(data) = item { server_watcher_groups.push(data); }
+        }
             
         let server_presets = self.app_state.storage.get_watcher_preset(&account_hash).await
             .unwrap_or_default();
@@ -670,7 +673,7 @@ impl WatcherHandler {
         };
         
         info!("Integrated configuration sync completed for user: {}, operations: {}, duration: {:.2}ms", 
-              account_hash, response.stats.as_ref().unwrap().total_operations, response.stats.as_ref().unwrap().sync_duration_ms);
+              account_hash, response.stats.as_ref().map(|s| s.total_operations).unwrap_or_default(), response.stats.as_ref().map(|s| s.sync_duration_ms).unwrap_or_default());
         
         Ok(Response::new(response))
     }

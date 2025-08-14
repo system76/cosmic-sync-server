@@ -8,6 +8,9 @@ pub use device_handler::DeviceHandler;
 pub mod file_handler;
 pub use file_handler::FileHandler;
 
+// File submodules (helpers, shared logic)
+pub mod file;
+
 pub mod watcher_handler;
 pub use watcher_handler::WatcherHandler;
 

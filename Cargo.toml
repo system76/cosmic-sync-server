@@ -113,8 +113,7 @@ aws-types = { version = "1.3" }
 # Data structures for performance
 dashmap = "5.5"
 
-# Additional async MySQL client
-mysql_async = "0.34"
+once_cell = "1.19"
 
 # Logging compatibility
 log = "0.4"

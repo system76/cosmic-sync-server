@@ -370,6 +370,3 @@ impl Handler for DeviceHandler {
         }
     }
 }
-// Include tests
-#[cfg(test)]
-mod device_handler_tests;

@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use chrono::prelude::*;
-use mysql_async::{prelude::*, Opts, Pool, TxOpts};
+// mysql_async removed; using only sqlx
+use sqlx::mysql::MySqlPoolOptions as SqlxMySqlPoolOptions;
+use sqlx::MySqlPool as SqlxMySqlPool;
 use tracing::{debug, error, info};
 
 use crate::storage::{Result, Storage, StorageError, StorageMetrics};
@@ -22,15 +24,21 @@ const CONNECTION_POOL_MAX: usize = 50;
 
 /// MySQL storage implementation
 pub struct MySqlStorage {
-    pool: Pool,
+    sqlx_pool: SqlxMySqlPool,
 }
 
 impl MySqlStorage {
-    /// Create a new MySQL storage with existing pool
-    pub fn new_with_pool(pool: mysql_async::Pool) -> Result<Self> {
-        Ok(Self {
-            pool,
-        })
+    /// Create a new MySQL storage with existing mysql_async pool and a sqlx pool (transition)
+    pub fn new_with_pool(_pool: (), sqlx_pool: SqlxMySqlPool) -> Result<Self> { Ok(Self { sqlx_pool }) }
+
+    /// Create new storage from URL (builds both mysql_async and sqlx pools)
+    pub async fn new_with_url(url: &str) -> Result<Self> {
+        let sqlx_pool = SqlxMySqlPoolOptions::new()
+            .max_connections(10)
+            .connect(url)
+            .await
+            .map_err(|e| StorageError::Connection(format!("Failed to connect via sqlx: {}", e)))?;
+        Ok(Self { sqlx_pool })
     }
 
     /// Ensure server-side watcher_group and watcher mapping exists for given client IDs
@@ -43,27 +51,21 @@ impl MySqlStorage {
         client_watcher_id: i32,
         folder_hint: Option<&str>,
     ) -> Result<(i32, i32)> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-
-        // Use SERIALIZABLE to avoid race on first-time creation
-        conn.query_drop("SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE").await.map_err(|e| {
-            StorageError::Database(format!("Failed to set isolation level: {}", e))
-        })?;
-
-        let mut tx = conn.start_transaction(TxOpts::default()).await.map_err(|e| {
-            StorageError::Database(format!("Failed to start transaction: {}", e))
-        })?;
+        let mut tx = self.get_sqlx_pool().begin()
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to start transaction: {}", e)))?;
 
         // 1) Ensure watcher_group row for (account_hash, client_group_id)
-        let existing_group: Option<(i32,)> = tx.exec_first(
-            "SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?",
-            (account_hash, client_group_id)
-        ).await.map_err(|e| StorageError::Database(format!("Failed to query watcher_groups: {}", e)))?;
+        let existing_group: Option<i32> = sqlx::query_scalar(
+            r#"SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?"#
+        )
+        .bind(account_hash)
+        .bind(client_group_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to query watcher_groups: {}", e)))?;
 
-        let server_group_id = if let Some((id,)) = existing_group {
+        let server_group_id = if let Some(id) = existing_group {
             id
         } else {
             // Insert minimal watcher_group without touching other groups
@@ -72,29 +74,37 @@ impl MySqlStorage {
             let updated_at = created_at.clone();
             let title = format!("Client Group {}", client_group_id);
 
-            tx.exec_drop(
-                r"INSERT INTO watcher_groups (
+            sqlx::query(r#"INSERT INTO watcher_groups (
                     group_id, account_hash, device_hash, title,
                     created_at, updated_at, is_active
-                ) VALUES (?, ?, ?, ?, ?, ?, 1)",
-                (client_group_id, account_hash, device_hash, &title, &created_at, &updated_at)
-            ).await.map_err(|e| StorageError::Database(format!("Failed to insert watcher_group: {}", e)))?;
+                ) VALUES (?, ?, ?, ?, ?, ?, 1)"#)
+                .bind(client_group_id)
+                .bind(account_hash)
+                .bind(device_hash)
+                .bind(&title)
+                .bind(&created_at)
+                .bind(&updated_at)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| StorageError::Database(format!("Failed to insert watcher_group: {}", e)))?;
 
-            // Get inserted id
-            tx.exec_first::<(i32,), _, _>("SELECT LAST_INSERT_ID()", ())
+            sqlx::query_scalar("SELECT LAST_INSERT_ID()")
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?
-                .map(|(id,)| id)
-                .unwrap_or(0)
         };
 
         if server_group_id == 0 {
             // Fallback reselect if needed
-            let re: Option<(i32,)> = tx.exec_first(
-                "SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?",
-                (account_hash, client_group_id)
-            ).await.map_err(|e| StorageError::Database(format!("Failed to reselect watcher_groups: {}", e)))?;
-            if let Some((id,)) = re { id } else { 0 }
+            let re: Option<i32> = sqlx::query_scalar(
+                r#"SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?"#
+            )
+            .bind(account_hash)
+            .bind(client_group_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to reselect watcher_groups: {}", e)))?;
+            if let Some(id) = re { id } else { 0 }
         } else { server_group_id };
 
         let server_group_id: i32 = if server_group_id == 0 {
@@ -102,12 +112,17 @@ impl MySqlStorage {
         } else { server_group_id };
 
         // 2) Ensure watcher row mapping for (account_hash, local_group_id=client_group_id, watcher_id=client_watcher_id)
-        let existing_watcher: Option<(i32,)> = tx.exec_first(
-            "SELECT id FROM watchers WHERE account_hash = ? AND local_group_id = ? AND watcher_id = ?",
-            (account_hash, client_group_id, client_watcher_id)
-        ).await.map_err(|e| StorageError::Database(format!("Failed to query watchers: {}", e)))?;
+        let existing_watcher: Option<i32> = sqlx::query_scalar(
+            r#"SELECT id FROM watchers WHERE account_hash = ? AND local_group_id = ? AND watcher_id = ?"#
+        )
+        .bind(account_hash)
+        .bind(client_group_id)
+        .bind(client_watcher_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to query watchers: {}", e)))?;
 
-        let server_watcher_id = if let Some((id,)) = existing_watcher {
+        let server_watcher_id = if let Some(id) = existing_watcher {
             id
         } else {
             let folder = folder_hint
@@ -117,28 +132,26 @@ impl MySqlStorage {
             let title = format!("Watcher for {}", folder_name);
             let now_ts = chrono::Utc::now().timestamp();
 
-            tx.exec_drop(
-                r"INSERT INTO watchers (
+            sqlx::query(r#"INSERT INTO watchers (
                     watcher_id, account_hash, group_id, local_group_id, folder, title,
                     is_recursive, created_at, updated_at, is_active, extra_json
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 1, '{}')",
-                (
-                    client_watcher_id,
-                    account_hash,
-                    server_group_id,
-                    client_group_id,
-                    &folder,
-                    &title,
-                    now_ts,
-                    now_ts,
-                )
-            ).await.map_err(|e| StorageError::Database(format!("Failed to insert watcher: {}", e)))?;
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 1, '{}')"#)
+                .bind(client_watcher_id)
+                .bind(account_hash)
+                .bind(server_group_id)
+                .bind(client_group_id)
+                .bind(&folder)
+                .bind(&title)
+                .bind(now_ts)
+                .bind(now_ts)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| StorageError::Database(format!("Failed to insert watcher: {}", e)))?;
 
-            tx.exec_first::<(i32,), _, _>("SELECT LAST_INSERT_ID()", ())
+            sqlx::query_scalar("SELECT LAST_INSERT_ID()")
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?
-                .map(|(id,)| id)
-                .unwrap_or(0)
         };
 
         if server_watcher_id == 0 {
@@ -150,31 +163,17 @@ impl MySqlStorage {
         Ok((server_group_id, server_watcher_id))
     }
     
-    /// Create a new MySQL storage instance
-    pub fn new(opts: Opts) -> Result<Self> {
-        info!("Creating MySQL storage with options: {:?}", opts);
-        
-        let pool = Pool::new(opts);
-        
-        let storage = Self { pool };
-        
-        // 비동기 함수를 동기적으로 호출하는 부분 제거
-        // 스키마 초기화는 별도로 처리
-        info!("MySQL storage created successfully");
-        
-        Ok(storage)
-    }
+    /// Legacy constructor removed; use new_with_url instead
+    pub fn new(_opts: ()) -> Result<Self> { Err(StorageError::NotImplemented("Use new_with_url".to_string())) }
     
     /// Check database connection
     pub async fn check_connection(&self) -> Result<()> {
-        let mut conn = self.pool.get_conn().await
-            .map_err(|e| StorageError::Database(format!("Failed to connect to database: {}", e)))?;
-            
-        // Execute simple query to verify connection
-        let result: Vec<String> = conn.query("SELECT 'Connection OK'").await
+        // Execute simple query to verify connection (sqlx)
+        let result: Option<String> = sqlx::query_scalar("SELECT 'Connection OK'")
+            .fetch_optional(self.get_sqlx_pool())
+            .await
             .map_err(|e| StorageError::Database(format!("Failed to execute test query: {}", e)))?;
-            
-        if result.is_empty() || result[0] != "Connection OK" {
+        if result.unwrap_or_default() != "Connection OK" {
             return Err(StorageError::Database("Database connection check failed".to_string()));
         }
         
@@ -183,9 +182,6 @@ impl MySqlStorage {
     
     /// Initialize database schema
     pub async fn init_schema(&self) -> Result<()> {
-        let mut conn = self.pool.get_conn().await
-            .map_err(|e| StorageError::Database(format!("Failed to connect to database: {}", e)))?;
-            
         info!("🔄 Initializing database schema...");
             
         // Create accounts table
@@ -203,7 +199,9 @@ impl MySqlStorage {
             is_active BOOLEAN NOT NULL DEFAULT TRUE
         )";
         
-        conn.query_drop(create_accounts_table).await
+        sqlx::query(create_accounts_table)
+            .execute(self.get_sqlx_pool())
+            .await
             .map_err(|e| StorageError::Database(format!("Failed to create accounts table: {}", e)))?;
             
         info!("✅ accounts 테이블 생성 확인");
@@ -221,7 +219,9 @@ impl MySqlStorage {
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
         )";
         
-        conn.query_drop(create_auth_tokens_table).await
+        sqlx::query(create_auth_tokens_table)
+            .execute(self.get_sqlx_pool())
+            .await
             .map_err(|e| StorageError::Database(format!("Failed to create auth_tokens table: {}", e)))?;
             
         info!("✅ auth_tokens 테이블 생성 확인");
@@ -245,7 +245,9 @@ impl MySqlStorage {
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
         )";
         
-        conn.query_drop(create_devices_table).await
+        sqlx::query(create_devices_table)
+            .execute(self.get_sqlx_pool())
+            .await
             .map_err(|e| StorageError::Database(format!("Failed to create devices table: {}", e)))?;
             
         info!("✅ devices 테이블 생성 확인");
@@ -275,7 +277,9 @@ impl MySqlStorage {
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
         )";
         
-        conn.query_drop(create_files_table).await
+        sqlx::query(create_files_table)
+            .execute(self.get_sqlx_pool())
+            .await
             .map_err(|e| StorageError::Database(format!("Failed to create files table: {}", e)))?;
             
         info!("✅ files 테이블 생성 확인");
@@ -291,7 +295,9 @@ impl MySqlStorage {
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
         )";
         
-        conn.query_drop(create_encryption_keys_table).await
+        sqlx::query(create_encryption_keys_table)
+            .execute(self.get_sqlx_pool())
+            .await
             .map_err(|e| StorageError::Database(format!("Failed to create encryption_keys table: {}", e)))?;
             
         info!("✅ encryption_keys 테이블 생성 확인");
@@ -303,109 +309,83 @@ impl MySqlStorage {
     
     /// 데이터베이스 스키마 마이그레이션
     pub async fn migrate_schema(&self) -> Result<()> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("데이터베이스 연결 실패: {}", e))
-        })?;
-        
         info!("데이터베이스 스키마 마이그레이션 시작");
         
         // watcher_presets 테이블에 presets 컬럼이 있는지 확인하고 preset_json으로 변경
-        let has_presets_column: bool = conn.query_first::<bool, _>(
-            "SELECT COUNT(*) > 0 
-             FROM information_schema.columns 
-             WHERE table_schema = DATABASE() 
-             AND table_name = 'watcher_presets' 
-             AND column_name = 'presets'"
-        ).await.map_err(|e| {
-            error!("컬럼 존재 여부 확인 실패: {}", e);
-            StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e))
-        })?.unwrap_or(false);
+        let has_presets_column: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 
+               FROM information_schema.columns 
+               WHERE table_schema = DATABASE() 
+                 AND table_name = 'watcher_presets' 
+                 AND column_name = 'presets'"#
+        )
+        .fetch_one(self.get_sqlx_pool())
+        .await
+        .map_err(|e| { error!("컬럼 존재 여부 확인 실패: {}", e); StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) })?;
         
         if has_presets_column {
             info!("watcher_presets 테이블의 presets 컬럼을 preset_json으로 변경");
             
             // presets 컬럼을 preset_json으로 이름 변경
-            conn.query_drop(
-                "ALTER TABLE watcher_presets CHANGE COLUMN presets preset_json TEXT NOT NULL"
-            ).await.map_err(|e| {
-                error!("presets 컬럼 이름 변경 실패: {}", e);
-                StorageError::Database(format!("presets 컬럼 이름 변경 실패: {}", e))
-            })?;
+            sqlx::query(
+                r#"ALTER TABLE watcher_presets CHANGE COLUMN presets preset_json TEXT NOT NULL"#
+            ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("presets 컬럼 이름 변경 실패: {}", e); StorageError::Database(format!("presets 컬럼 이름 변경 실패: {}", e)) })?;
             
             info!("watcher_presets 테이블의 presets 컬럼을 preset_json으로 변경 완료");
         }
         
         // files 테이블에 is_encrypted 컬럼 존재 여부 확인
-        let has_is_encrypted: bool = conn.query_first::<bool, _>(
-            "SELECT COUNT(*) > 0 
-             FROM information_schema.columns 
-             WHERE table_schema = DATABASE() 
-             AND table_name = 'files' 
-             AND column_name = 'is_encrypted'"
-        ).await.map_err(|e| {
-            error!("컬럼 존재 여부 확인 실패: {}", e);
-            StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e))
-        })?.unwrap_or(false);
+        let has_is_encrypted: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 
+               FROM information_schema.columns 
+               WHERE table_schema = DATABASE() 
+                 AND table_name = 'files' 
+                 AND column_name = 'is_encrypted'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("컬럼 존재 여부 확인 실패: {}", e); StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) })?;
         
         if !has_is_encrypted {
             info!("files 테이블에 is_encrypted 컬럼 추가");
             
             // is_encrypted 컬럼 추가
-            conn.query_drop(
-                "ALTER TABLE files ADD COLUMN is_encrypted BOOLEAN NOT NULL DEFAULT FALSE"
-            ).await.map_err(|e| {
-                error!("is_encrypted 컬럼 추가 실패: {}", e);
-                StorageError::Database(format!("is_encrypted 컬럼 추가 실패: {}", e))
-            })?;
+            sqlx::query(
+                r#"ALTER TABLE files ADD COLUMN is_encrypted BOOLEAN NOT NULL DEFAULT FALSE"#
+            ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("is_encrypted 컬럼 추가 실패: {}", e); StorageError::Database(format!("is_encrypted 컬럼 추가 실패: {}", e)) })?;
             
             info!("files 테이블에 is_encrypted 컬럼 추가 완료");
         }
         
         // files 테이블에 operation_type 컬럼 존재 여부 확인
-        let has_operation_type: bool = conn.query_first::<bool, _>(
-            "SELECT COUNT(*) > 0 
-             FROM information_schema.columns 
-             WHERE table_schema = DATABASE() 
-             AND table_name = 'files' 
-             AND column_name = 'operation_type'"
-        ).await.map_err(|e| {
-            error!("컬럼 존재 여부 확인 실패: {}", e);
-            StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e))
-        })?.unwrap_or(false);
+        let has_operation_type: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 
+               FROM information_schema.columns 
+               WHERE table_schema = DATABASE() 
+                 AND table_name = 'files' 
+                 AND column_name = 'operation_type'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("컬럼 존재 여부 확인 실패: {}", e); StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) })?;
         
         if !has_operation_type {
             info!("files 테이블에 operation_type 컬럼 추가");
             
             // operation_type 컬럼 추가
-            conn.query_drop(
-                "ALTER TABLE files ADD COLUMN operation_type VARCHAR(20) NOT NULL DEFAULT 'UPLOAD'"
-            ).await.map_err(|e| {
-                error!("operation_type 컬럼 추가 실패: {}", e);
-                StorageError::Database(format!("operation_type 컬럼 추가 실패: {}", e))
-            })?;
+            sqlx::query(
+                r#"ALTER TABLE files ADD COLUMN operation_type VARCHAR(20) NOT NULL DEFAULT 'UPLOAD'"#
+            ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("operation_type 컬럼 추가 실패: {}", e); StorageError::Database(format!("operation_type 컬럼 추가 실패: {}", e)) })?;
             
             // 기존 데이터 업데이트
-            conn.query_drop(
-                "UPDATE files SET operation_type = 'UPLOAD' WHERE operation_type = ''"
-            ).await.map_err(|e| {
-                error!("operation_type 기본값 설정 실패: {}", e);
-                StorageError::Database(format!("operation_type 기본값 설정 실패: {}", e))
-            })?;
+            sqlx::query(
+                r#"UPDATE files SET operation_type = 'UPLOAD' WHERE operation_type = ''"#
+            ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("operation_type 기본값 설정 실패: {}", e); StorageError::Database(format!("operation_type 기본값 설정 실패: {}", e)) })?;
             
             info!("files 테이블에 operation_type 컬럼 추가 완료");
         }
         
         // watcher_conditions 테이블 존재 여부 확인
-        let has_watcher_conditions_table: bool = conn.query_first::<bool, _>(
-            "SELECT COUNT(*) > 0 
-             FROM information_schema.tables 
-             WHERE table_schema = DATABASE() 
-             AND table_name = 'watcher_conditions'"
-        ).await.map_err(|e| {
-            error!("테이블 존재 여부 확인 실패: {}", e);
-            StorageError::Database(format!("테이블 존재 여부 확인 실패: {}", e))
-        })?.unwrap_or(false);
+        let has_watcher_conditions_table: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 
+               FROM information_schema.tables 
+               WHERE table_schema = DATABASE() 
+                 AND table_name = 'watcher_conditions'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("테이블 존재 여부 확인 실패: {}", e); StorageError::Database(format!("테이블 존재 여부 확인 실패: {}", e)) })?;
         
         if !has_watcher_conditions_table {
             info!("watcher_conditions 테이블 생성");
@@ -429,107 +409,77 @@ impl MySqlStorage {
                 FOREIGN KEY (watcher_id) REFERENCES watchers(id) ON DELETE CASCADE
             )";
             
-            conn.query_drop(create_watcher_conditions_table).await.map_err(|e| {
-                error!("watcher_conditions 테이블 생성 실패: {}", e);
-                StorageError::Database(format!("watcher_conditions 테이블 생성 실패: {}", e))
-            })?;
+                sqlx::query(create_watcher_conditions_table).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("watcher_conditions 테이블 생성 실패: {}", e); StorageError::Database(format!("watcher_conditions 테이블 생성 실패: {}", e)) })?;
             
             info!("watcher_conditions 테이블 생성 완료");
         } else {
             // watcher_conditions 테이블에 account_hash 컬럼 존재 여부 확인
-            let has_account_hash_in_conditions: bool = conn.query_first::<bool, _>(
-                "SELECT COUNT(*) > 0 
+            let has_account_hash_in_conditions: bool = sqlx::query_scalar(
+                r#"SELECT COUNT(*) > 0 
                  FROM information_schema.columns 
                  WHERE table_schema = DATABASE() 
                  AND table_name = 'watcher_conditions' 
-                 AND column_name = 'account_hash'"
-            ).await.map_err(|e| {
-                error!("컬럼 존재 여부 확인 실패: {}", e);
-                StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e))
-            })?.unwrap_or(false);
+                 AND column_name = 'account_hash'"#
+            ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("컬럼 존재 여부 확인 실패: {}", e); StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) })?;
             
             if !has_account_hash_in_conditions {
                 info!("watcher_conditions 테이블에 account_hash 컬럼 추가");
                 
                 // account_hash 컬럼 추가
-                conn.query_drop(
-                    "ALTER TABLE watcher_conditions 
-                     ADD COLUMN account_hash VARCHAR(255) NOT NULL DEFAULT ''"
-                ).await.map_err(|e| {
-                    error!("account_hash 컬럼 추가 실패: {}", e);
-                    StorageError::Database(format!("account_hash 컬럼 추가 실패: {}", e))
-                })?;
+                sqlx::query(
+                    r#"ALTER TABLE watcher_conditions 
+                     ADD COLUMN account_hash VARCHAR(255) NOT NULL DEFAULT ''"#
+                ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("account_hash 컬럼 추가 실패: {}", e); StorageError::Database(format!("account_hash 컬럼 추가 실패: {}", e)) })?;
                 
                 // 기존 데이터의 account_hash 업데이트 (watchers 테이블에서 가져오기)
-                conn.query_drop(
-                    "UPDATE watcher_conditions wc 
+                sqlx::query(
+                    r#"UPDATE watcher_conditions wc 
                      JOIN watchers w ON wc.watcher_id = w.id 
                      SET wc.account_hash = w.account_hash
-                     WHERE wc.account_hash = ''"
-                ).await.map_err(|e| {
-                    error!("account_hash 업데이트 실패: {}", e);
-                    StorageError::Database(format!("account_hash 업데이트 실패: {}", e))
-                })?;
+                     WHERE wc.account_hash = ''"#
+                ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("account_hash 업데이트 실패: {}", e); StorageError::Database(format!("account_hash 업데이트 실패: {}", e)) })?;
                 
                 // account_hash에 대한 외래키 제약조건 추가
-                conn.query_drop(
-                    "ALTER TABLE watcher_conditions 
+                sqlx::query(
+                    r#"ALTER TABLE watcher_conditions 
                      ADD CONSTRAINT fk_watcher_conditions_account 
-                     FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE"
-                ).await.map_err(|e| {
-                    error!("외래키 제약조건 추가 실패: {}", e);
-                    StorageError::Database(format!("외래키 제약조건 추가 실패: {}", e))
-                })?;
+                     FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE"#
+                ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("외래키 제약조건 추가 실패: {}", e); StorageError::Database(format!("외래키 제약조건 추가 실패: {}", e)) })?;
                 
                 // account_hash에 대한 인덱스 추가
-                conn.query_drop(
-                    "CREATE INDEX idx_watcher_conditions_account_hash ON watcher_conditions(account_hash)"
-                ).await.map_err(|e| {
-                    error!("인덱스 추가 실패: {}", e);
-                    StorageError::Database(format!("인덱스 추가 실패: {}", e))
-                })?;
+                sqlx::query(
+                    r#"CREATE INDEX idx_watcher_conditions_account_hash ON watcher_conditions(account_hash)"#
+                ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("인덱스 추가 실패: {}", e); StorageError::Database(format!("인덱스 추가 실패: {}", e)) })?;
                 
-                conn.query_drop(
-                    "CREATE INDEX idx_watcher_conditions_account_watcher ON watcher_conditions(account_hash, watcher_id)"
-                ).await.map_err(|e| {
-                    error!("복합 인덱스 추가 실패: {}", e);
-                    StorageError::Database(format!("복합 인덱스 추가 실패: {}", e))
-                })?;
+                sqlx::query(
+                    r#"CREATE INDEX idx_watcher_conditions_account_watcher ON watcher_conditions(account_hash, watcher_id)"#
+                ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("복합 인덱스 추가 실패: {}", e); StorageError::Database(format!("복합 인덱스 추가 실패: {}", e)) })?;
                 
                 info!("watcher_conditions 테이블에 account_hash 컬럼 추가 완료");
             }
         }
         
         // watchers 테이블에 watcher_id 컬럼 존재 여부 확인
-        let has_watcher_id_in_watchers: bool = conn.query_first::<bool, _>(
-            "SELECT COUNT(*) > 0 
+        let has_watcher_id_in_watchers: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 
              FROM information_schema.columns 
              WHERE table_schema = DATABASE() 
              AND table_name = 'watchers' 
-             AND column_name = 'watcher_id'"
-        ).await.map_err(|e| {
-            error!("컬럼 존재 여부 확인 실패: {}", e);
-            StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e))
-        })?.unwrap_or(false);
+             AND column_name = 'watcher_id'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("컬럼 존재 여부 확인 실패: {}", e); StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) })?;
         
         if !has_watcher_id_in_watchers {
             info!("watchers 테이블에 watcher_id 컬럼 추가");
             
             // watcher_id 컬럼 추가
-            conn.query_drop(
-                "ALTER TABLE watchers ADD COLUMN watcher_id INT NOT NULL DEFAULT 0 AFTER id"
-            ).await.map_err(|e| {
-                error!("watcher_id 컬럼 추가 실패: {}", e);
-                StorageError::Database(format!("watcher_id 컬럼 추가 실패: {}", e))
-            })?;
+            sqlx::query(
+                r#"ALTER TABLE watchers ADD COLUMN watcher_id INT NOT NULL DEFAULT 0 AFTER id"#
+            ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("watcher_id 컬럼 추가 실패: {}", e); StorageError::Database(format!("watcher_id 컬럼 추가 실패: {}", e)) })?;
             
             // 기존 데이터의 watcher_id를 id와 동일하게 설정 (임시 처리)
-            conn.query_drop(
-                "UPDATE watchers SET watcher_id = id WHERE watcher_id = 0"
-            ).await.map_err(|e| {
-                error!("watcher_id 기본값 설정 실패: {}", e);
-                StorageError::Database(format!("watcher_id 기본값 설정 실패: {}", e))
-            })?;
+            sqlx::query(
+                r#"UPDATE watchers SET watcher_id = id WHERE watcher_id = 0"#
+            ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("watcher_id 기본값 설정 실패: {}", e); StorageError::Database(format!("watcher_id 기본값 설정 실패: {}", e)) })?;
             
             info!("watchers 테이블에 watcher_id 컬럼 추가 완료");
         }
@@ -540,13 +490,11 @@ impl MySqlStorage {
     
     // Helper method to convert SQL error to StorageError
     #[allow(dead_code)]
-    fn sql_error(e: mysql_async::Error) -> StorageError {
-        StorageError::Database(format!("SQL error: {}", e))
-    }
+    fn sql_error<E: std::fmt::Display>(e: E) -> StorageError { StorageError::Database(format!("SQL error: {}", e)) }
     
     // Convert timestamp to MySQL datetime format
     pub fn timestamp_to_datetime(timestamp: i64) -> String {
-        let dt = Utc.timestamp_opt(timestamp, 0).unwrap();
+        let dt = Utc.timestamp_opt(timestamp, 0).single().unwrap_or_else(|| Utc::now());
         dt.format("%Y-%m-%d %H:%M:%S").to_string()
     }
     
@@ -560,8 +508,11 @@ impl MySqlStorage {
     }
 
     // pool 가져오기
-    pub fn get_pool(&self) -> &Pool {
-        &self.pool
+    // mysql_async pool removed
+
+    /// sqlx pool getter (transition)
+    pub fn get_sqlx_pool(&self) -> &SqlxMySqlPool {
+        &self.sqlx_pool
     }
 }
 
@@ -836,19 +787,15 @@ impl Storage for MySqlStorage {
             return Ok(Some((0, 0)));
         }
         
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        // 서버 watcher_id로 클라이언트 watcher_id 조회
-        let result: Option<(i32, i32)> = conn.exec_first(
-            "SELECT group_id, watcher_id FROM watchers WHERE id = ? AND account_hash = ?",
-            (server_watcher_id, account_hash)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to get client watcher_id: {}", e))
-        })?;
-        
+        // 서버 watcher_id로 클라이언트 watcher_id 조회(sqlx)
+        let result: Option<(i32, i32)> = sqlx::query_as(
+            r#"SELECT group_id, watcher_id FROM watchers WHERE id = ? AND account_hash = ?"#
+        )
+        .bind(server_watcher_id)
+        .bind(account_hash)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to get client watcher_id: {}", e)))?;
         Ok(result)
     }
     
@@ -860,19 +807,15 @@ impl Storage for MySqlStorage {
     }
     
     async fn get_watcher_condition(&self, condition_id: i64) -> Result<Option<WatcherCondition>> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        let result: Option<(i64, String, i32, String, String, String, String, i64, i64)> = conn.exec_first(
-            r"SELECT id, account_hash, watcher_id, condition_type, `key`, value, operator, created_at, updated_at
+        let result: Option<(i64, String, i32, String, String, String, String, i64, i64)> = sqlx::query_as(
+            r#"SELECT id, account_hash, watcher_id, condition_type, `key`, value, operator, created_at, updated_at
               FROM watcher_conditions 
-              WHERE id = ?",
-            (condition_id,)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to get watcher condition: {}", e))
-        })?;
+              WHERE id = ?"#
+        )
+        .bind(condition_id)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to get watcher condition: {}", e)))?;
         
         if let Some((id, account_hash, watcher_id, condition_type_str, key, value_str, operator, created_at, updated_at)) = result {
             let condition_type = match condition_type_str.as_str() {
@@ -907,85 +850,68 @@ impl Storage for MySqlStorage {
     
     // 중복 검사 메서드들
     async fn check_duplicate_watcher_group(&self, account_hash: &str, local_group_id: i32) -> Result<Option<i32>> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        let server_id: Option<i32> = conn.exec_first(
-            "SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?",
-            (account_hash, local_group_id)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to check duplicate watcher group: {}", e))
-        })?;
+        let server_id: Option<i32> = sqlx::query_scalar(
+            r#"SELECT id FROM watcher_groups WHERE account_hash = ? AND group_id = ?"#
+        )
+        .bind(account_hash)
+        .bind(local_group_id)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to check duplicate watcher group: {}", e)))?;
         
         Ok(server_id)
     }
     
     async fn check_duplicate_watcher(&self, account_hash: &str, local_watcher_id: i32) -> Result<Option<i32>> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        let server_id: Option<i32> = conn.exec_first(
-            "SELECT id FROM watchers WHERE account_hash = ? AND watcher_id = ?",
-            (account_hash, local_watcher_id)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to check duplicate watcher: {}", e))
-        })?;
+        let server_id: Option<i32> = sqlx::query_scalar(
+            r#"SELECT id FROM watchers WHERE account_hash = ? AND watcher_id = ?"#
+        )
+        .bind(account_hash)
+        .bind(local_watcher_id)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to check duplicate watcher: {}", e)))?;
         
         Ok(server_id)
     }
     
     // FileNotice 관련 메서드들
     async fn store_file_notice(&self, file_notice: &FileNotice) -> Result<()> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        conn.exec_drop(
-            r"INSERT INTO file_notices (account_hash, device_hash, path, action, timestamp, file_id, group_id, watcher_id, revision)
+        sqlx::query(r#"INSERT INTO file_notices (account_hash, device_hash, path, action, timestamp, file_id, group_id, watcher_id, revision)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON DUPLICATE KEY UPDATE
               action = VALUES(action),
               timestamp = VALUES(timestamp),
               group_id = VALUES(group_id),
               watcher_id = VALUES(watcher_id),
-              revision = VALUES(revision)",
-            (
-                &file_notice.account_hash,
-                &file_notice.device_hash,
-                &file_notice.path,
-                &file_notice.action,
-                file_notice.timestamp,
-                file_notice.file_id,
-                file_notice.group_id,
-                file_notice.watcher_id,
-                file_notice.revision,
-            )
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to store file notice: {}", e))
-        })?;
+              revision = VALUES(revision)"#)
+            .bind(&file_notice.account_hash)
+            .bind(&file_notice.device_hash)
+            .bind(&file_notice.path)
+            .bind(&file_notice.action)
+            .bind(file_notice.timestamp)
+            .bind(file_notice.file_id)
+            .bind(file_notice.group_id)
+            .bind(file_notice.watcher_id)
+            .bind(file_notice.revision)
+            .execute(self.get_sqlx_pool())
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to store file notice: {}", e)))?;
         
         Ok(())
     }
     
     async fn get_file_notices(&self, account_hash: &str, device_hash: &str) -> Result<Vec<FileNotice>> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        let notices: Vec<(String, String, String, String, i64, u64, i32, i32, i64)> = conn.exec(
-            r"SELECT account_hash, device_hash, path, action, timestamp, file_id, group_id, watcher_id, revision
+        let notices: Vec<(String, String, String, String, i64, u64, i32, i32, i64)> = sqlx::query_as(
+            r#"SELECT account_hash, device_hash, path, action, timestamp, file_id, group_id, watcher_id, revision
               FROM file_notices
-              WHERE account_hash = ? AND device_hash = ?",
-            (account_hash, device_hash)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to get file notices: {}", e))
-        })?;
+              WHERE account_hash = ? AND device_hash = ?"#
+        )
+        .bind(account_hash)
+        .bind(device_hash)
+        .fetch_all(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to get file notices: {}", e)))?;
         
         let mut result = Vec::new();
         for (account_hash, device_hash, path, action, timestamp, file_id, group_id, watcher_id, revision) in notices {
@@ -1006,178 +932,271 @@ impl Storage for MySqlStorage {
     }
     
     async fn delete_file_notice(&self, account_hash: &str, device_hash: &str, file_id: u64) -> Result<()> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        conn.exec_drop(
-            "DELETE FROM file_notices WHERE account_hash = ? AND device_hash = ? AND file_id = ?",
-            (account_hash, device_hash, file_id)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to delete file notice: {}", e))
-        })?;
+        sqlx::query(r#"DELETE FROM file_notices WHERE account_hash = ? AND device_hash = ? AND file_id = ?"#)
+            .bind(account_hash)
+            .bind(device_hash)
+            .bind(file_id)
+            .execute(self.get_sqlx_pool())
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to delete file notice: {}", e)))?;
         
         Ok(())
     }
 
     // Version management methods implementation
     async fn get_file_history(&self, account_hash: &str, file_path: &str, group_id: i32) -> Result<Vec<crate::models::file::SyncFile>> {
+        use sqlx::Row;
         debug!("Getting file history for path: {} in group: {}", file_path, group_id);
-        
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
 
-        let query = "
-            SELECT user_id, device_hash, group_id, watcher_id, file_id, filename, 
-                   file_hash, file_path, file_size, upload_time, last_updated, 
-                   is_deleted, revision
-            FROM files 
-            WHERE user_id = ? AND file_path = ? AND group_id = ?
-            ORDER BY revision DESC
-        ";
+        let rows = sqlx::query(
+            r#"SELECT 
+                    account_hash,
+                    device_hash,
+                    group_id,
+                    watcher_id,
+                    file_id,
+                    filename,
+                    file_hash,
+                    file_path,
+                    size AS file_size,
+                    UNIX_TIMESTAMP(created_time) AS created_ts,
+                    UNIX_TIMESTAMP(updated_time) AS updated_ts,
+                    is_deleted,
+                    revision
+               FROM files 
+               WHERE account_hash = ? AND file_path = ? AND group_id = ?
+               ORDER BY revision DESC"#
+        )
+        .bind(account_hash)
+        .bind(file_path)
+        .bind(group_id)
+        .fetch_all(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to get file history: {}", e)))?;
 
-        let rows: Vec<mysql_async::Row> = conn.exec(query, (account_hash, file_path, group_id))
-            .await
-            .map_err(|e| StorageError::Database(format!("Failed to get file history: {}", e)))?;
-
-        let mut files = Vec::new();
+        let mut files = Vec::with_capacity(rows.len());
         for row in rows {
-            let file = self.row_to_sync_file(row)?;
-            files.push(file);
+            let account_hash: String = row.try_get("account_hash").unwrap_or_default();
+            let device_hash: String = row.try_get("device_hash").unwrap_or_default();
+            let group_id: i32 = row.try_get("group_id").unwrap_or(0);
+            let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
+            let file_id: u64 = row.try_get("file_id").unwrap_or(0);
+            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_hash: String = row.try_get("file_hash").unwrap_or_default();
+            let file_path: String = row.try_get("file_path").unwrap_or_default();
+            let file_size: i64 = row.try_get("file_size").unwrap_or(0);
+            let created_ts: i64 = row.try_get("created_ts").unwrap_or(0);
+            let updated_ts: i64 = row.try_get("updated_ts").unwrap_or(0);
+            let is_deleted: bool = row.try_get("is_deleted").unwrap_or(false);
+            let revision: i64 = row.try_get("revision").unwrap_or(0);
+
+            let upload_time = chrono::DateTime::from_timestamp(created_ts, 0).unwrap_or_else(|| chrono::Utc::now());
+            let last_updated = chrono::DateTime::from_timestamp(updated_ts, 0).unwrap_or_else(|| chrono::Utc::now());
+
+            files.push(crate::models::file::SyncFile {
+                id: format!("{}_{}", file_id, revision),
+                user_id: account_hash,
+                device_hash,
+                group_id,
+                watcher_id,
+                file_id,
+                filename,
+                file_hash,
+                file_path,
+                file_size,
+                mime_type: "application/octet-stream".to_string(),
+                modified_time: updated_ts,
+                is_encrypted: false,
+                upload_time,
+                last_updated,
+                is_deleted,
+                revision,
+            });
         }
 
         Ok(files)
     }
 
     async fn get_file_versions_by_id(&self, account_hash: &str, file_id: u64) -> Result<Vec<crate::models::file::SyncFile>> {
+        use sqlx::Row;
         debug!("Getting file versions for file_id: {}", file_id);
-        
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
 
-        let query = "
-            SELECT user_id, device_hash, group_id, watcher_id, file_id, filename, 
-                   file_hash, file_path, file_size, upload_time, last_updated, 
-                   is_deleted, revision
-            FROM files 
-            WHERE user_id = ? AND file_id = ?
-            ORDER BY revision DESC
-        ";
+        let rows = sqlx::query(
+            r#"SELECT 
+                    account_hash,
+                    device_hash,
+                    group_id,
+                    watcher_id,
+                    file_id,
+                    filename,
+                    file_hash,
+                    file_path,
+                    size AS file_size,
+                    UNIX_TIMESTAMP(created_time) AS created_ts,
+                    UNIX_TIMESTAMP(updated_time) AS updated_ts,
+                    is_deleted,
+                    revision
+               FROM files 
+               WHERE account_hash = ? AND file_id = ?
+               ORDER BY revision DESC"#
+        )
+        .bind(account_hash)
+        .bind(file_id as i64)
+        .fetch_all(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to get file versions: {}", e)))?;
 
-        let rows: Vec<mysql_async::Row> = conn.exec(query, (account_hash, file_id))
-            .await
-            .map_err(|e| StorageError::Database(format!("Failed to get file versions: {}", e)))?;
-
-        let mut files = Vec::new();
+        let mut files = Vec::with_capacity(rows.len());
         for row in rows {
-            let file = self.row_to_sync_file(row)?;
-            files.push(file);
+            let account_hash: String = row.try_get("account_hash").unwrap_or_default();
+            let device_hash: String = row.try_get("device_hash").unwrap_or_default();
+            let group_id: i32 = row.try_get("group_id").unwrap_or(0);
+            let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
+            let file_id: u64 = row.try_get("file_id").unwrap_or(0);
+            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_hash: String = row.try_get("file_hash").unwrap_or_default();
+            let file_path: String = row.try_get("file_path").unwrap_or_default();
+            let file_size: i64 = row.try_get("file_size").unwrap_or(0);
+            let created_ts: i64 = row.try_get("created_ts").unwrap_or(0);
+            let updated_ts: i64 = row.try_get("updated_ts").unwrap_or(0);
+            let is_deleted: bool = row.try_get("is_deleted").unwrap_or(false);
+            let revision: i64 = row.try_get("revision").unwrap_or(0);
+
+            let upload_time = chrono::DateTime::from_timestamp(created_ts, 0).unwrap_or_else(|| chrono::Utc::now());
+            let last_updated = chrono::DateTime::from_timestamp(updated_ts, 0).unwrap_or_else(|| chrono::Utc::now());
+
+            files.push(crate::models::file::SyncFile {
+                id: format!("{}_{}", file_id, revision),
+                user_id: account_hash,
+                device_hash,
+                group_id,
+                watcher_id,
+                file_id,
+                filename,
+                file_hash,
+                file_path,
+                file_size,
+                mime_type: "application/octet-stream".to_string(),
+                modified_time: updated_ts,
+                is_encrypted: false,
+                upload_time,
+                last_updated,
+                is_deleted,
+                revision,
+            });
         }
 
         Ok(files)
     }
 
     async fn get_file_by_revision(&self, account_hash: &str, file_id: u64, revision: i64) -> Result<crate::models::file::SyncFile> {
+        use sqlx::Row;
         debug!("Getting file by revision: file_id={}, revision={}", file_id, revision);
-        
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
 
-        let query = "
-            SELECT user_id, device_hash, group_id, watcher_id, file_id, filename, 
-                   file_hash, file_path, file_size, upload_time, last_updated, 
-                   is_deleted, revision
-            FROM files 
-            WHERE user_id = ? AND file_id = ? AND revision = ?
-            LIMIT 1
-        ";
+        let row_opt = sqlx::query(
+            r#"SELECT 
+                    account_hash,
+                    device_hash,
+                    group_id,
+                    watcher_id,
+                    file_id,
+                    filename,
+                    file_hash,
+                    file_path,
+                    size AS file_size,
+                    UNIX_TIMESTAMP(created_time) AS created_ts,
+                    UNIX_TIMESTAMP(updated_time) AS updated_ts,
+                    is_deleted,
+                    revision
+               FROM files 
+               WHERE account_hash = ? AND file_id = ? AND revision = ?
+               LIMIT 1"#
+        )
+        .bind(account_hash)
+        .bind(file_id as i64)
+        .bind(revision)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to get file by revision: {}", e)))?;
 
-        let row: Option<mysql_async::Row> = conn.exec_first(query, (account_hash, file_id, revision))
-            .await
-            .map_err(|e| StorageError::Database(format!("Failed to get file by revision: {}", e)))?;
+        if let Some(row) = row_opt {
+            let account_hash: String = row.try_get("account_hash").unwrap_or_default();
+            let device_hash: String = row.try_get("device_hash").unwrap_or_default();
+            let group_id: i32 = row.try_get("group_id").unwrap_or(0);
+            let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
+            let file_id: u64 = row.try_get("file_id").unwrap_or(0);
+            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_hash: String = row.try_get("file_hash").unwrap_or_default();
+            let file_path: String = row.try_get("file_path").unwrap_or_default();
+            let file_size: i64 = row.try_get("file_size").unwrap_or(0);
+            let created_ts: i64 = row.try_get("created_ts").unwrap_or(0);
+            let updated_ts: i64 = row.try_get("updated_ts").unwrap_or(0);
+            let is_deleted: bool = row.try_get("is_deleted").unwrap_or(false);
+            let revision: i64 = row.try_get("revision").unwrap_or(0);
 
-        match row {
-            Some(row) => self.row_to_sync_file(row),
-            None => Err(StorageError::NotFound(format!(
-                "File not found: file_id={}, revision={}", file_id, revision
-            )))
+            let upload_time = chrono::DateTime::from_timestamp(created_ts, 0).unwrap_or_else(|| chrono::Utc::now());
+            let last_updated = chrono::DateTime::from_timestamp(updated_ts, 0).unwrap_or_else(|| chrono::Utc::now());
+
+            Ok(crate::models::file::SyncFile {
+                id: format!("{}_{}", file_id, revision),
+                user_id: account_hash,
+                device_hash,
+                group_id,
+                watcher_id,
+                file_id,
+                filename,
+                file_hash,
+                file_path,
+                file_size,
+                mime_type: "application/octet-stream".to_string(),
+                modified_time: updated_ts,
+                is_encrypted: false,
+                upload_time,
+                last_updated,
+                is_deleted,
+                revision,
+            })
+        } else {
+            Err(StorageError::NotFound(format!("File not found: file_id={}, revision={}", file_id, revision)))
         }
     }
 
     async fn store_file(&self, file: &crate::models::file::SyncFile) -> Result<()> {
         debug!("Storing file: file_id={}, revision={}", file.file_id, file.revision);
-        
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
 
-        let query = "
-            INSERT INTO files (
-                user_id, device_hash, group_id, watcher_id, file_id, filename,
-                file_hash, file_path, file_size, upload_time, last_updated,
-                is_deleted, revision
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ";
-
-        // Execute query with individual parameters to avoid tuple length limits
-        conn.exec_drop(
-            query,
-            mysql_async::Params::Positional(vec![
-                file.user_id.clone().into(),
-                file.device_hash.clone().into(),
-                file.group_id.into(),
-                file.watcher_id.into(),
-                file.file_id.into(),
-                file.filename.clone().into(),
-                file.file_hash.clone().into(),
-                file.file_path.clone().into(),
-                file.file_size.into(),
-                file.upload_time.to_rfc3339().into(),
-                file.last_updated.to_rfc3339().into(),
-                file.is_deleted.into(),
-                file.revision.into(),
-            ])
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to store file: {}", e))
-        })?;
+        sqlx::query(
+            r#"INSERT INTO files (
+                file_id, account_hash, device_hash, file_path, filename, file_hash, size,
+                is_deleted, revision, created_time, updated_time, group_id, watcher_id,
+                server_group_id, server_watcher_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?)"#
+        )
+        .bind(file.file_id as i64)
+        .bind(&file.user_id)
+        .bind(&file.device_hash)
+        .bind(&file.file_path)
+        .bind(&file.filename)
+        .bind(&file.file_hash)
+        .bind(file.file_size)
+        .bind(file.is_deleted)
+        .bind(file.revision)
+        .bind(file.upload_time.timestamp())
+        .bind(file.last_updated.timestamp())
+        .bind(file.group_id)
+        .bind(file.watcher_id)
+        .bind(file.group_id)
+        .bind(file.watcher_id)
+        .execute(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to store file: {}", e)))?;
 
         Ok(())
     }
 
     async fn get_devices_for_account(&self, account_hash: &str) -> Result<Vec<Device>> {
         debug!("Getting devices for account: {}", account_hash);
-        
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-
-        let query = "
-            SELECT account_hash, device_hash, is_active, os_version, app_version, 
-                   registered_at, last_sync_time
-            FROM devices 
-            WHERE account_hash = ?
-        ";
-
-        let rows: Vec<mysql_async::Row> = conn.exec(query, (account_hash,))
-            .await
-            .map_err(|e| StorageError::Database(format!("Failed to get devices: {}", e)))?;
-
-        let mut devices = Vec::new();
-        for row in rows {
-            let device = self.row_to_device(row)?;
-            devices.push(device);
-        }
-
-        Ok(devices)
+        // 위임하여 단일 구현 유지
+        MySqlDeviceExt::list_devices(self, account_hash).await
     }
     
     // Stub implementations for missing Storage trait methods
@@ -1242,89 +1261,10 @@ impl Storage for MySqlStorage {
 // Helper methods for version management
 impl MySqlStorage {
     /// Convert MySQL row to SyncFile
-    fn row_to_sync_file(&self, row: mysql_async::Row) -> Result<crate::models::file::SyncFile> {
-        use mysql_async::prelude::FromValue;
-        use chrono::{DateTime, Utc};
-        
-        // Extract values individually to avoid tuple length limitations
-        let user_id: String = row.get(0).ok_or_else(|| StorageError::Database("Missing user_id".to_string()))?;
-        let device_hash: String = row.get(1).ok_or_else(|| StorageError::Database("Missing device_hash".to_string()))?;
-        let group_id: i32 = row.get(2).ok_or_else(|| StorageError::Database("Missing group_id".to_string()))?;
-        let watcher_id: i32 = row.get(3).ok_or_else(|| StorageError::Database("Missing watcher_id".to_string()))?;
-        let file_id: u64 = row.get(4).ok_or_else(|| StorageError::Database("Missing file_id".to_string()))?;
-        let filename: String = row.get(5).ok_or_else(|| StorageError::Database("Missing filename".to_string()))?;
-        let file_hash: String = row.get(6).ok_or_else(|| StorageError::Database("Missing file_hash".to_string()))?;
-        let file_path: String = row.get(7).ok_or_else(|| StorageError::Database("Missing file_path".to_string()))?;
-        let file_size: i64 = row.get(8).ok_or_else(|| StorageError::Database("Missing file_size".to_string()))?;
-        // Get timestamp values and convert to DateTime<Utc>
-        let upload_time_str: String = row.get(9).ok_or_else(|| StorageError::Database("Missing upload_time".to_string()))?;
-        let upload_time = DateTime::parse_from_rfc3339(&upload_time_str)
-            .map_err(|e| StorageError::Database(format!("Invalid upload_time format: {}", e)))?
-            .with_timezone(&Utc);
-        let last_updated_str: String = row.get(10).ok_or_else(|| StorageError::Database("Missing last_updated".to_string()))?;
-        let last_updated = DateTime::parse_from_rfc3339(&last_updated_str)
-            .map_err(|e| StorageError::Database(format!("Invalid last_updated format: {}", e)))?
-            .with_timezone(&Utc);
-        let is_deleted: bool = row.get(11).ok_or_else(|| StorageError::Database("Missing is_deleted".to_string()))?;
-        let revision: i64 = row.get(12).ok_or_else(|| StorageError::Database("Missing revision".to_string()))?;
-
-        Ok(crate::models::file::SyncFile {
-            id: format!("{}_{}", file_id, revision), // Generate unique ID
-            user_id,
-            device_hash,
-            group_id,
-            watcher_id,
-            file_id,
-            filename,
-            file_hash,
-            file_path,
-            file_size,
-            mime_type: "application/octet-stream".to_string(), // Default MIME type
-            modified_time: upload_time.timestamp(),
-            is_encrypted: false, // Default value
-            upload_time,
-            last_updated,
-            is_deleted,
-            revision,
-        })
-    }
+    fn row_to_sync_file(&self, _row: ()) -> Result<crate::models::file::SyncFile> { unreachable!("replaced by sqlx"); }
 
     /// Convert MySQL row to Device
-    fn row_to_device(&self, row: mysql_async::Row) -> Result<Device> {
-        use mysql_async::prelude::FromValue;
-        use chrono::{DateTime, Utc};
-        
-        // Extract values individually for safety
-        let account_hash: String = row.get(0).ok_or_else(|| StorageError::Database("Missing account_hash".to_string()))?;
-        let device_hash: String = row.get(1).ok_or_else(|| StorageError::Database("Missing device_hash".to_string()))?;
-        let is_active: bool = row.get(2).ok_or_else(|| StorageError::Database("Missing is_active".to_string()))?;
-        let os_version: String = row.get(3).ok_or_else(|| StorageError::Database("Missing os_version".to_string()))?;
-        let app_version: String = row.get(4).ok_or_else(|| StorageError::Database("Missing app_version".to_string()))?;
-        // Get timestamp values and convert to DateTime<Utc>
-        let registered_at_str: String = row.get(5).ok_or_else(|| StorageError::Database("Missing registered_at".to_string()))?;
-        let registered_at = DateTime::parse_from_rfc3339(&registered_at_str)
-            .map_err(|e| StorageError::Database(format!("Invalid registered_at format: {}", e)))?
-            .with_timezone(&Utc);
-        let last_sync_time_opt: Option<String> = row.get(6);
-        let last_sync_time: Option<DateTime<Utc>> = last_sync_time_opt
-            .map(|s| DateTime::parse_from_rfc3339(&s)
-                .map_err(|e| StorageError::Database(format!("Invalid last_sync_time format: {}", e)))
-                .map(|dt| dt.with_timezone(&Utc)))
-            .transpose()
-            .map_err(|e| e)?;
-
-        Ok(Device {
-            user_id: account_hash.clone(), // user_id와 account_hash가 같은 값
-            account_hash,
-            device_hash,
-            updated_at: registered_at, // updated_at을 registered_at과 같은 값으로 설정
-            registered_at,
-            last_sync: last_sync_time.unwrap_or(registered_at), // last_sync 필드명 사용
-            is_active,
-            os_version,
-            app_version,
-        })
-    }
+    fn row_to_device(&self, _row: ()) -> Result<Device> { unreachable!("replaced by sqlx"); }
     
     // Stub implementations for missing Storage trait methods
     async fn health_check(&self) -> Result<bool> {

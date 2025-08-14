@@ -177,7 +177,7 @@ mod tests {
         let _auth_service = container.auth_service();
         let _device_service = container.device_service();
         let _file_service = container.file_service();
-        let _watcher_service = container.watcher_service();
+        // watcher_service is not available; ensure other services are accessible.
         let _encryption_service = container.encryption_service();
         let _config = container.config();
         

@@ -180,7 +180,7 @@ async fn start_http_server(
     config: &ServerConfig,
     app_state: Arc<AppState>,
 ) -> Result<()> {
-    let http_port = 8080; // Fixed HTTP port for now
+    let http_port = crate::config::constants::DEFAULT_HTTP_PORT as u16; // central constant
     let addr = format!("{}:{}", config.host, http_port);
     
     info!("🌐 Starting HTTP server on {}", addr);
@@ -212,7 +212,7 @@ async fn start_http_server(
                     .allow_any_origin()
                     .allow_any_method()
                     .allow_any_header()
-                    .max_age(3600)
+                    .max_age(crate::config::constants::DEFAULT_CORS_MAX_AGE_SECS as usize)
             )
             
             // Health endpoints
@@ -305,17 +305,21 @@ fn parse_mysql_url(url: &str) -> Result<crate::config::settings::DatabaseConfig>
 /// Setup graceful shutdown signal handling
 async fn setup_shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
+        if let Err(e) = signal::ctrl_c().await {
+            error!("Failed to install Ctrl+C handler: {}", e);
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to install signal handler")
-            .recv()
-            .await;
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(e) => {
+                error!("Failed to install signal handler: {}", e);
+            }
+        }
     };
 
     #[cfg(not(unix))]

@@ -76,6 +76,89 @@ impl FileService {
         self.store_file_with_update_type(file_info, data, sync::file_update_notification::UpdateType::Uploaded).await
     }
 
+    /// Convert client group_id to server group_id
+    pub async fn convert_client_group_to_server(
+        &self,
+        account_hash: &str,
+        client_group_id: i32,
+    ) -> Result<Option<i32>, StorageError> {
+        self.storage.get_server_group_id(account_hash, client_group_id).await
+    }
+
+    /// Convert client (group_id, watcher_id) to server (group_id, watcher_id)
+    pub async fn convert_client_ids_to_server(
+        &self,
+        account_hash: &str,
+        client_group_id: i32,
+        client_watcher_id: i32,
+    ) -> Result<Option<(i32, i32)>, StorageError> {
+        self.storage
+            .get_server_ids(account_hash, client_group_id, client_watcher_id)
+            .await
+    }
+
+    /// Ensure server-side IDs for upload context or fallback to mapping
+    pub async fn ensure_server_ids_for_upload(
+        &self,
+        account_hash: &str,
+        device_hash: &str,
+        client_group_id: i32,
+        client_watcher_id: i32,
+        normalized_file_path: Option<&str>,
+    ) -> Result<(i32, i32), StorageError> {
+        // If underlying storage is MySqlStorage, use ensure_server_ids_for
+        if let Some(mysql) = self.storage.as_any().downcast_ref::<crate::storage::mysql::MySqlStorage>() {
+            let (server_group_id, server_watcher_id) = mysql
+                .ensure_server_ids_for(
+                    account_hash,
+                    device_hash,
+                    client_group_id,
+                    client_watcher_id,
+                    normalized_file_path,
+                )
+                .await?;
+            return Ok((server_group_id, server_watcher_id));
+        }
+
+        // Fallback: try existing mapping from generic Storage
+        match self
+            .storage
+            .get_server_ids(account_hash, client_group_id, client_watcher_id)
+            .await?
+        {
+            Some((group_id, watcher_id)) => Ok((group_id, watcher_id)),
+            None => Ok((0, 0)),
+        }
+    }
+
+    /// Build file metadata for upload using server IDs
+    pub fn build_file_info_for_upload(
+        &self,
+        req: &crate::sync::UploadFileRequest,
+        file_id: u64,
+        normalized_file_path: String,
+        server_group_id: i32,
+        server_watcher_id: i32,
+    ) -> ModelFileInfo {
+        ModelFileInfo {
+            file_id,
+            filename: req.filename.clone(),
+            file_hash: req.file_hash.clone(),
+            device_hash: req.device_hash.clone(),
+            group_id: server_group_id,
+            watcher_id: server_watcher_id,
+            is_encrypted: req.is_encrypted,
+            file_path: normalized_file_path,
+            updated_time: prost_types::Timestamp {
+                seconds: chrono::Utc::now().timestamp(),
+                nanos: 0,
+            },
+            revision: req.revision,
+            account_hash: req.account_hash.clone(),
+            size: req.file_size,
+        }
+    }
+
     /// Store file with custom update type for notifications
     pub async fn store_file_with_update_type(
         &self, 

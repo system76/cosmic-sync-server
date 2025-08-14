@@ -14,6 +14,7 @@ use aws_sdk_s3::operation::create_bucket::CreateBucketError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{CreateBucketConfiguration, BucketLocationConstraint};
 use aws_types::region::Region;
+use tokio::sync::OnceCell;
 
 use crate::config::settings::S3Config;
 use crate::storage::{FileStorage, StorageMetrics, Result, StorageError};
@@ -27,20 +28,20 @@ pub struct DatabaseFileStorage {
 }
 
 impl DatabaseFileStorage {
-    pub fn new() -> Self {
+    pub async fn new() -> Result<Self> {
         // Create MySQL storage from configuration
         let config = crate::config::settings::Config::load();
         
-        match Self::create_mysql_storage_from_config(&config) {
+        match Self::create_mysql_storage_from_config(&config).await {
             Ok(mysql_storage) => {
                 info!("DatabaseFileStorage initialized with MySQL from config");
-                Self {
+                Ok(Self {
                     mysql_storage: Arc::new(mysql_storage),
-                }
+                })
             }
             Err(e) => {
                 error!("Failed to initialize DatabaseFileStorage with MySQL: {}", e);
-                panic!("Failed to initialize DatabaseFileStorage: {}", e);
+                Err(e)
             }
         }
     }
@@ -51,50 +52,10 @@ impl DatabaseFileStorage {
         }
     }
     
-    fn create_mysql_storage_from_config(config: &crate::config::settings::Config) -> Result<MySqlStorage> {
+    async fn create_mysql_storage_from_config(config: &crate::config::settings::Config) -> Result<MySqlStorage> {
         let db_url = config.database.url();
-        
-        if db_url.starts_with("mysql://") {
-            // Parse MySQL URL: mysql://user:password@host:port/database
-            let mut parts = db_url.split("://");
-            let _ = parts.next(); // Skip "mysql"
-            
-            if let Some(conn_info) = parts.next() {
-                let mut auth_host_parts = conn_info.split('@');
-                
-                // Extract user info
-                let auth_part = auth_host_parts.next().unwrap_or("");
-                let mut auth_parts = auth_part.split(':');
-                let user = auth_parts.next().unwrap_or("");
-                let password = auth_parts.next().unwrap_or("");
-                
-                // Extract host info
-                let host_part = auth_host_parts.next().unwrap_or("");
-                let mut host_parts = host_part.split('/');
-                let host_port = host_parts.next().unwrap_or("");
-                let mut host_port_parts = host_port.split(':');
-                let host = host_port_parts.next().unwrap_or("");
-                let port_str = host_port_parts.next().unwrap_or("3306");
-                let port = port_str.parse::<u16>().unwrap_or(3306);
-                
-                // extract database name
-                let database = host_parts.next().unwrap_or("");
-                
-                // 연결 URL 생성
-                let connection_url = format!("mysql://{}:{}@{}:{}/{}", user, password, host, port, database);
-                
-                // Opts 생성
-                let opts = mysql_async::Opts::from_url(&connection_url)
-                    .map_err(|e| StorageError::Database(format!("Failed to parse MySQL connection URL: {}", e)))?;
-                
-                // MySQL 스토리지 생성
-                MySqlStorage::new(opts)
-            } else {
-                Err(StorageError::ConfigurationError("Invalid MySQL URL format".to_string()))
-            }
-        } else {
-            Err(StorageError::ConfigurationError("Only MySQL URLs are supported for database storage".to_string()))
-        }
+        let url = crate::utils::db::parse_mysql_url(&db_url)?;
+        MySqlStorage::new_with_url(&url).await
     }
 }
 
@@ -107,6 +68,10 @@ impl FileStorage for DatabaseFileStorage {
         self.mysql_storage.store_file_data(file_id, data).await?;
         
         Ok(format!("db:{}", file_id))
+    }
+    
+    async fn store_file_data_with_options(&self, file_id: u64, data: Vec<u8>, _compress: bool) -> Result<String> {
+        self.store_file_data(file_id, data).await
     }
     
     async fn get_file_data(&self, file_id: u64) -> Result<Option<Vec<u8>>> {
@@ -125,6 +90,17 @@ impl FileStorage for DatabaseFileStorage {
         info!("Database file data deletion for file_id={} handled by main storage logic", file_id);
         
         Ok(())
+    }
+    
+    async fn batch_delete_file_data(&self, file_ids: Vec<u64>) -> Result<Vec<(u64, bool)>> {
+        let mut results = Vec::with_capacity(file_ids.len());
+        for file_id in file_ids {
+            match self.delete_file_data(file_id).await {
+                Ok(_) => results.push((file_id, true)),
+                Err(_) => results.push((file_id, false)),
+            }
+        }
+        Ok(results)
     }
     
     async fn file_data_exists(&self, file_id: u64) -> Result<bool> {
@@ -158,43 +134,17 @@ impl FileStorage for DatabaseFileStorage {
         }
     }
     
-    // Stub implementations for missing methods
-    async fn store_file_data_with_options(&self, file_id: u64, data: Vec<u8>, compress: bool) -> Result<String> {
-        // For now, ignore compression option and use existing method
-        self.store_file_data(file_id, data).await
-    }
-    
-    async fn batch_delete_file_data(&self, file_ids: Vec<u64>) -> Result<Vec<(u64, bool)>> {
-        let mut results = Vec::new();
-        for file_id in file_ids {
-            match self.delete_file_data(file_id).await {
-                Ok(_) => results.push((file_id, true)),
-                Err(_) => results.push((file_id, false)),
-            }
-        }
-        Ok(results)
+    fn storage_type(&self) -> &'static str {
+        "database"
     }
     
     async fn get_metrics(&self) -> Result<StorageMetrics> {
-        Ok(StorageMetrics {
-            total_queries: 0,
-            successful_queries: 0,
-            failed_queries: 0,
-            average_query_time_ms: 0.0,
-            active_connections: 0,
-            idle_connections: 0,
-            cache_hits: 0,
-            cache_misses: 0,
-        })
+        Ok(StorageMetrics::default())
     }
     
     async fn cleanup_orphaned_data(&self) -> Result<u64> {
-        // TODO: Implement database orphaned data cleanup
+        // TODO: Implement S3 orphaned data cleanup
         Ok(0)
-    }
-    
-    fn storage_type(&self) -> &'static str {
-        "database"
     }
 }
 
@@ -202,26 +152,18 @@ impl FileStorage for DatabaseFileStorage {
 /// Stores files in Amazon S3 or S3-compatible storage
 pub struct S3FileStorage {
     config: S3Config,
-    client: S3Client,
+    client: OnceCell<Result<S3Client>>, // Lazy-initialized S3 client
+    bucket_ready: OnceCell<Result<()>>, // Ensures bucket exists once
 }
 
 impl S3FileStorage {
     pub async fn new(config: &S3Config) -> Result<Self> {
-        debug!("Initializing S3 file storage with bucket: {}", config.bucket);
-        
-        // Create S3 client based on configuration
-        let client = Self::create_s3_client(config).await?;
-        
-        let storage = Self {
+        debug!("Initializing S3 file storage (lazy) with bucket: {}", config.bucket);
+        Ok(Self {
             config: config.clone(),
-            client,
-        };
-        
-        // Ensure bucket exists, create if necessary
-        storage.ensure_bucket_exists().await?;
-        
-        info!("S3FileStorage initialized successfully with bucket: {}", config.bucket);
-        Ok(storage)
+            client: OnceCell::new(),
+            bucket_ready: OnceCell::new(),
+        })
     }
     
     async fn create_s3_client(config: &S3Config) -> Result<S3Client> {
@@ -266,13 +208,37 @@ impl S3FileStorage {
         
         Ok(client)
     }
+
+    async fn get_client(&self) -> Result<&S3Client> {
+        let result_ref = self.client.get_or_init(|| async {
+            match Self::create_s3_client(&self.config).await {
+                Ok(c) => Ok(c),
+                Err(e) => Err(e),
+            }
+        }).await;
+        match result_ref {
+            Ok(client) => Ok(client),
+            Err(e) => Err(StorageError::S3Error(format!("Failed to initialize S3 client: {}", e))),
+        }
+    }
+
+    async fn ensure_bucket_exists_once(&self) -> Result<()> {
+        let res_ref = self.bucket_ready.get_or_init(|| async {
+            self.ensure_bucket_exists().await
+        }).await;
+        match res_ref {
+            Ok(()) => Ok(()),
+            Err(e) => Err(StorageError::S3Error(format!("Bucket ensure failed: {}", e))),
+        }
+    }
     
     /// Ensures that the configured S3 bucket exists, creating it if necessary
     async fn ensure_bucket_exists(&self) -> Result<()> {
         debug!("Checking if bucket exists: {}", self.config.bucket);
         
         // First try to check if bucket exists
-        match self.client
+        let client = self.get_client().await?;
+        match client
             .head_bucket()
             .bucket(&self.config.bucket)
             .send()
@@ -302,7 +268,8 @@ impl S3FileStorage {
     async fn create_bucket(&self) -> Result<()> {
         info!("Creating S3 bucket: {}", self.config.bucket);
         
-        let mut create_bucket_request = self.client
+        let client = self.get_client().await?;
+        let mut create_bucket_request = client
             .create_bucket()
             .bucket(&self.config.bucket);
         
@@ -356,7 +323,9 @@ impl S3FileStorage {
     
     /// Helper method to perform the actual S3 upload
     async fn upload_to_s3(&self, s3_key: &str, stream: ByteStream) -> Result<String> {
-        match self.client
+        self.ensure_bucket_exists_once().await?;
+        let client = self.get_client().await?;
+        match client
             .put_object()
             .bucket(&self.config.bucket)
             .key(s3_key)
@@ -370,7 +339,7 @@ impl S3FileStorage {
             }
             Err(e) => {
                 error!("Failed to store file in S3: {}", e);
-                Err(StorageError::S3Error(format!("Failed to upload file: {}", e)))
+                Err(StorageError::S3Error(format!("Failed to store file in S3: {}", e)))
             }
         }
     }
@@ -421,7 +390,8 @@ impl FileStorage for S3FileStorage {
         debug!("Retrieving file data from S3: bucket={}, key={}", self.config.bucket, s3_key);
         
         // Download from S3
-        match self.client
+        let client = self.get_client().await?;
+        match client
             .get_object()
             .bucket(&self.config.bucket)
             .key(&s3_key)
@@ -462,7 +432,8 @@ impl FileStorage for S3FileStorage {
         debug!("Deleting file data from S3: bucket={}, key={}", self.config.bucket, s3_key);
         
         // Delete from S3
-        match self.client
+        let client = self.get_client().await?;
+        match client
             .delete_object()
             .bucket(&self.config.bucket)
             .key(&s3_key)
@@ -487,7 +458,8 @@ impl FileStorage for S3FileStorage {
         debug!("Checking if file data exists in S3: bucket={}, key={}", self.config.bucket, s3_key);
         
         // Use HEAD request to check existence
-        match self.client
+        let client = self.get_client().await?;
+        match client
             .head_object()
             .bucket(&self.config.bucket)
             .key(&s3_key)
@@ -518,7 +490,8 @@ impl FileStorage for S3FileStorage {
         debug!("Getting file size from S3: bucket={}, key={}", self.config.bucket, s3_key);
         
         // Use HEAD request to get file metadata including size
-        match self.client
+        let client = self.get_client().await?;
+        match client
             .head_object()
             .bucket(&self.config.bucket)
             .key(&s3_key)
@@ -549,7 +522,8 @@ impl FileStorage for S3FileStorage {
         debug!("S3 file storage health check for bucket: {}", self.config.bucket);
         
         // First check if bucket exists
-        match self.client
+        let client = self.get_client().await?;
+        match client
             .head_bucket()
             .bucket(&self.config.bucket)
             .send()
@@ -565,7 +539,8 @@ impl FileStorage for S3FileStorage {
         }
         
         // Then try to list objects to verify read access
-        match self.client
+        let client = self.get_client().await?;
+        match client
             .list_objects_v2()
             .bucket(&self.config.bucket)
             .max_keys(1)

@@ -21,22 +21,17 @@ pub mod cache;
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
-use std::path::PathBuf;
-use std::fs;
-use std::io;
-use tracing::{debug, info, warn, error, instrument};
+use tracing::{info, warn, error, instrument};
 use thiserror::Error;
-use mysql_async::Opts;
-use mysql_async::prelude::Queryable;
+// mysql_async dependency is being removed; prefer sqlx constructs
 
 use crate::{
     models::{
         Account, Device, FileInfo, AuthToken, 
-        WatcherGroup, WatcherPreset, WatcherCondition,
-        FileEntry, file::FileNotice, 
-        watcher::Watcher,
+        WatcherGroup, WatcherCondition,
+        file::FileNotice,
     },
-    sync::{DeviceInfo, WatcherData, WatcherGroupData},
+    sync::{WatcherData, WatcherGroupData},
     config::settings::{DatabaseConfig, StorageConfig, StorageType},
     error::{SyncError, Result as AppResult},
 };
@@ -374,16 +369,10 @@ impl StorageFactory {
         let database = config.name.clone();
         
         // 연결 URL 생성 (secure_auth=false로 SSL 비활성화)
-        let connection_url = format!("mysql://{}:{}@{}:{}/{}?secure_auth=false", user, password, host, port, database);
+        let connection_url = format!("mysql://{}:{}@{}:{}/{}?ssl-mode=DISABLED", user, password, host, port, database);
         
-        // Opts 생성
-        let opts = Opts::from_url(&connection_url)
-            .map_err(|e| SyncError::Storage(format!("Failed to parse MySQL connection URL: {}", e)))?;
-        
-        info!("MySQL connection options: {:?}", opts);
-        
-        // MySqlStorage 생성
-        let storage = MySqlStorage::new(opts)
+        // Create storage using sqlx pool
+        let storage = MySqlStorage::new_with_url(&connection_url).await
             .map_err(|e| SyncError::Storage(format!("Failed to create MySQL storage: {}", e)))?;
         
         // 스키마 초기화 명시적 호출
@@ -395,12 +384,10 @@ impl StorageFactory {
             }
         }
         
-        // 트랜잭션 자동 커밋 설정 확인
-        let pool = storage.get_pool();
-        let mut conn = pool.get_conn().await
-            .map_err(|e| SyncError::Storage(format!("Failed to get connection: {}", e)))?;
-            
-        match conn.query_first::<String, _>("SELECT @@autocommit").await {
+        // 트랜잭션 자동 커밋 설정 확인(sqlx)
+        match sqlx::query_scalar::<_, String>("SELECT @@autocommit")
+            .fetch_optional(storage.get_sqlx_pool())
+            .await {
             Ok(Some(value)) => info!("✅ MySQL autocommit setting: {}", value),
             Ok(None) => warn!("⚠️ Could not determine autocommit setting"),
             Err(e) => warn!("⚠️ Failed to check autocommit setting: {}", e),
@@ -443,7 +430,9 @@ pub async fn create_file_storage(config: &StorageConfig) -> AppResult<Arc<dyn Fi
     let file_storage: Arc<dyn FileStorage> = match config.storage_type {
         StorageType::Database => {
             info!("Using database blob storage");
-            Arc::new(file_storage::DatabaseFileStorage::new())
+            Arc::new(file_storage::DatabaseFileStorage::new()
+                .await
+                .map_err(|e| SyncError::Storage(format!("Failed to create DB file storage: {}", e)))?)
         },
         StorageType::S3 => {
             info!("Using S3 file storage");
@@ -514,7 +503,10 @@ impl StorageMonitor {
     }
     
     pub fn get_metrics(&self) -> StorageMetrics {
-        self.metrics.read().unwrap().clone()
+        match self.metrics.read() {
+            Ok(guard) => guard.clone(),
+            Err(_) => StorageMetrics::default(),
+        }
     }
 }
 

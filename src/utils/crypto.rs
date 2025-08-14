@@ -1,4 +1,3 @@
-use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use rand::{Rng, rngs::OsRng, RngCore};
 use hex;
@@ -29,7 +28,7 @@ pub fn generate_account_hash_from_email_only(email: &str) -> String {
 
 /// 클라이언트와 동일한 방식으로 계정 해시 생성
 /// 클라이언트가 기대하는 특정 해시를 생성하는 방식을 찾기 위한 함수
-pub fn generate_account_hash_for_client(email: &str, name: &str, user_id: &str) -> String {
+pub fn generate_account_hash_for_client(email: &str, _name: &str, _user_id: &str) -> String {
     // 클라이언트가 기대하는 해시: 209f313bf330cf40fe89fae938babbeba7ec95d31237f77cf19de418c0d50a0a
     // 이 해시가 어떻게 생성되는지 파악하기 위해 여러 조합 시도
     

@@ -238,8 +238,9 @@ impl crate::domain::Specification<Device> for DeviceSearchSpec {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::domain::{Account, DeviceType};
+	use super::*;
+	use crate::domain::{Account, DeviceType};
+	use crate::domain::Specification;
 
     #[test]
     fn test_account_search_spec() {

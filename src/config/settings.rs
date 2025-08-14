@@ -71,13 +71,13 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            host: "[::1]".to_string(),
-            port: 50051,
+            host: crate::config::constants::DEFAULT_GRPC_HOST.to_string(),
+            port: crate::config::constants::DEFAULT_GRPC_PORT,
             storage_path: None,
-            worker_threads: 4,
-            auth_token_expiry_hours: 24,
-            max_file_size: 50 * 1024 * 1024, // 50MB is appropriate for the server
-            max_concurrent_requests: 100,
+            worker_threads: crate::config::constants::DEFAULT_WORKER_THREADS,
+            auth_token_expiry_hours: crate::config::constants::DEFAULT_AUTH_TOKEN_EXPIRY_HOURS,
+            max_file_size: crate::config::constants::DEFAULT_MAX_FILE_SIZE_BYTES,
+            max_concurrent_requests: crate::config::constants::DEFAULT_MAX_CONCURRENT_REQUESTS,
         }
     }
 }
@@ -85,28 +85,28 @@ impl Default for ServerConfig {
 impl ServerConfig {
     /// Load configuration from environment variables or use defaults
     pub fn load() -> Self {
-        let host = env::var("SERVER_HOST").unwrap_or_else(|_| "[::1]".to_string());
+        let host = env::var("SERVER_HOST").unwrap_or_else(|_| crate::config::constants::DEFAULT_GRPC_HOST.to_string());
         let port = env::var("SERVER_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(50051);
+            .unwrap_or(crate::config::constants::DEFAULT_GRPC_PORT);
         let storage_path = env::var("STORAGE_PATH").ok().map(|p| p.to_string());
         let worker_threads = env::var("WORKER_THREADS")
             .ok()
             .and_then(|t| t.parse::<usize>().ok())
-            .unwrap_or(4);
+            .unwrap_or(crate::config::constants::DEFAULT_WORKER_THREADS);
         let auth_token_expiry_hours = env::var("AUTH_TOKEN_EXPIRY_HOURS")
             .ok()
             .and_then(|h| h.parse::<i64>().ok())
-            .unwrap_or(24);
+            .unwrap_or(crate::config::constants::DEFAULT_AUTH_TOKEN_EXPIRY_HOURS);
         let max_file_size = env::var("MAX_FILE_SIZE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(50 * 1024 * 1024);
+            .unwrap_or(crate::config::constants::DEFAULT_MAX_FILE_SIZE_BYTES);
         let max_concurrent_requests = env::var("MAX_CONCURRENT_REQUESTS")
             .ok()
             .and_then(|r| r.parse::<usize>().ok())
-            .unwrap_or(100);
+            .unwrap_or(crate::config::constants::DEFAULT_MAX_CONCURRENT_REQUESTS);
         
         Self {
             host,
@@ -155,14 +155,14 @@ pub struct DatabaseConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            user: "user".to_string(),
-            password: "password".to_string(),
-            name: "cosmic_sync".to_string(),
-            host: "localhost".to_string(),
-            port: 3306,
-            max_connections: 5,
-            connection_timeout: 30,
-            log_queries: false,
+            user: crate::config::constants::DEFAULT_DB_USER.to_string(),
+            password: crate::config::constants::DEFAULT_DB_PASS.to_string(),
+            name: crate::config::constants::DEFAULT_DB_NAME.to_string(),
+            host: crate::config::constants::DEFAULT_DB_HOST.to_string(),
+            port: crate::config::constants::DEFAULT_DB_PORT,
+            max_connections: crate::config::constants::DEFAULT_DB_POOL,
+            connection_timeout: crate::config::constants::DEFAULT_DB_CONN_TIMEOUT_SECS,
+            log_queries: crate::config::constants::DEFAULT_DB_LOG_QUERIES,
         }
     }
 }
@@ -170,25 +170,25 @@ impl Default for DatabaseConfig {
 impl DatabaseConfig {
     /// Load database configuration from environment variables or use defaults
     pub fn load() -> Self {
-        let user = env::var("DB_USER").unwrap_or_else(|_| "user".to_string());
-        let password = env::var("DB_PASS").unwrap_or_else(|_| "password".to_string());
-        let name = env::var("DB_NAME").unwrap_or_else(|_| "cosmic_sync".to_string());
-        let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let user = env::var("DB_USER").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_USER.to_string());
+        let password = env::var("DB_PASS").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_PASS.to_string());
+        let name = env::var("DB_NAME").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_NAME.to_string());
+        let host = env::var("DB_HOST").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_HOST.to_string());
         let port = env::var("DB_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(3306);
+            .unwrap_or(crate::config::constants::DEFAULT_DB_PORT);
         let max_connections = env::var("DB_POOL")
             .ok()
             .and_then(|c| c.parse::<u32>().ok())
-            .unwrap_or(5);
+            .unwrap_or(crate::config::constants::DEFAULT_DB_POOL);
         let connection_timeout = env::var("DATABASE_CONNECTION_TIMEOUT")
             .ok()
             .and_then(|t| t.parse::<u64>().ok())
-            .unwrap_or(30);
+            .unwrap_or(crate::config::constants::DEFAULT_DB_CONN_TIMEOUT_SECS);
         let log_queries = env::var("DATABASE_LOG_QUERIES")
             .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
+            .unwrap_or(crate::config::constants::DEFAULT_DB_LOG_QUERIES);
             
         Self {
             user,
@@ -229,11 +229,11 @@ pub struct LoggingConfig {
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
-            level: "info".to_string(),
-            file_logging: true,
-            log_file: "logs/cosmic-sync-server.log".to_string(),
-            max_file_size: 10 * 1024 * 1024, // 10MB
-            max_backups: 5,
+            level: crate::config::constants::DEFAULT_LOG_LEVEL.to_string(),
+            file_logging: crate::config::constants::DEFAULT_LOG_TO_FILE,
+            log_file: crate::config::constants::DEFAULT_LOG_FILE.to_string(),
+            max_file_size: crate::config::constants::DEFAULT_LOG_MAX_FILE_SIZE_BYTES,
+            max_backups: crate::config::constants::DEFAULT_LOG_MAX_BACKUPS,
         }
     }
 }
@@ -241,19 +241,19 @@ impl Default for LoggingConfig {
 impl LoggingConfig {
     /// Load logging configuration from environment variables or use defaults
     pub fn load() -> Self {
-        let level = env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let level = env::var("LOG_LEVEL").unwrap_or_else(|_| crate::config::constants::DEFAULT_LOG_LEVEL.to_string());
         let file_logging = env::var("LOG_TO_FILE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(true);
-        let log_file = env::var("LOG_FILE").unwrap_or_else(|_| "logs/cosmic-sync-server.log".to_string());
+            .unwrap_or(crate::config::constants::DEFAULT_LOG_TO_FILE);
+        let log_file = env::var("LOG_FILE").unwrap_or_else(|_| crate::config::constants::DEFAULT_LOG_FILE.to_string());
         let max_file_size = env::var("LOG_MAX_FILE_SIZE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(10 * 1024 * 1024);
+            .unwrap_or(crate::config::constants::DEFAULT_LOG_MAX_FILE_SIZE_BYTES);
         let max_backups = env::var("LOG_MAX_BACKUPS")
             .ok()
             .and_then(|b| b.parse::<usize>().ok())
-            .unwrap_or(5);
+            .unwrap_or(crate::config::constants::DEFAULT_LOG_MAX_BACKUPS);
             
         Self {
             level,
@@ -418,18 +418,18 @@ pub struct S3Config {
 impl Default for S3Config {
     fn default() -> Self {
         Self {
-            region: "us-east-1".to_string(),
-            bucket: "cosmic-sync-files".to_string(),
-            key_prefix: "files/".to_string(),
+            region: crate::config::constants::DEFAULT_S3_REGION.to_string(),
+            bucket: crate::config::constants::DEFAULT_S3_BUCKET.to_string(),
+            key_prefix: crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string(),
             access_key_id: None,
             secret_access_key: None,
             session_token: None,
             endpoint_url: None,
-            force_path_style: false,
-            use_secret_manager: false,
+            force_path_style: crate::config::constants::DEFAULT_S3_FORCE_PATH_STYLE,
+            use_secret_manager: crate::config::constants::DEFAULT_S3_USE_SECRET_MANAGER,
             secret_name: None,
-            timeout_seconds: 30,
-            max_retries: 3,
+            timeout_seconds: crate::config::constants::DEFAULT_S3_TIMEOUT_SECONDS,
+            max_retries: crate::config::constants::DEFAULT_S3_MAX_RETRIES,
         }
     }
 }
@@ -438,28 +438,28 @@ impl S3Config {
     /// Load S3 configuration from environment variables or use defaults
     pub fn load() -> Self {
         Self {
-            region: env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
-            bucket: env::var("S3_BUCKET").unwrap_or_else(|_| "cosmic-sync-files".to_string()),
-            key_prefix: env::var("S3_KEY_PREFIX").unwrap_or_else(|_| "files/".to_string()),
+            region: env::var("AWS_REGION").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_REGION.to_string()),
+            bucket: env::var("S3_BUCKET").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_BUCKET.to_string()),
+            key_prefix: env::var("S3_KEY_PREFIX").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string()),
             access_key_id: env::var("AWS_ACCESS_KEY_ID").ok(),
             secret_access_key: env::var("AWS_SECRET_ACCESS_KEY").ok(),
             session_token: env::var("AWS_SESSION_TOKEN").ok(),
             endpoint_url: env::var("S3_ENDPOINT_URL").ok(),
             force_path_style: env::var("S3_FORCE_PATH_STYLE")
                 .map(|v| v == "1" || v.to_lowercase() == "true")
-                .unwrap_or(false),
+                .unwrap_or(crate::config::constants::DEFAULT_S3_FORCE_PATH_STYLE),
             use_secret_manager: env::var("USE_AWS_SECRET_MANAGER")
                 .map(|v| v == "1" || v.to_lowercase() == "true")
-                .unwrap_or(false),
+                .unwrap_or(crate::config::constants::DEFAULT_S3_USE_SECRET_MANAGER),
             secret_name: env::var("AWS_SECRET_NAME").ok(),
             timeout_seconds: env::var("S3_TIMEOUT_SECONDS")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(30),
+                .unwrap_or(crate::config::constants::DEFAULT_S3_TIMEOUT_SECONDS),
             max_retries: env::var("S3_MAX_RETRIES")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(3),
+                .unwrap_or(crate::config::constants::DEFAULT_S3_MAX_RETRIES),
         }
     }
 }

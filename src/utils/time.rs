@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc, NaiveDateTime, TimeZone, Timelike};
+use chrono::{DateTime, Utc, TimeZone, Timelike};
 use prost_types::Timestamp;
-use serde::{Deserialize, Serialize, Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serializer};
 
 /// Timestamp를 DateTime<Utc>로 변환
 pub fn timestamp_to_datetime(ts: &Timestamp) -> DateTime<Utc> {
@@ -24,7 +24,7 @@ pub fn datetime_to_mysql_string(dt: &DateTime<Utc>) -> String {
 /// Timestamp 직렬화/역직렬화 모듈
 pub mod timestamp_serde {
     use super::*;
-    use serde::{de, ser};
+    use serde::{de};
     
     pub fn serialize<S>(timestamp: &Timestamp, serializer: S) -> Result<S::Ok, S::Error>
     where

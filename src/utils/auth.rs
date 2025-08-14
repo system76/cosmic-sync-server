@@ -1,7 +1,6 @@
 use std::env;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 use tonic::Status;
-use crate::auth::oauth::OAuthService;
 
 /// Check if development or test mode is enabled
 pub fn is_dev_or_test_mode() -> bool {

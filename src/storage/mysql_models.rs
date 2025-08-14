@@ -3,16 +3,13 @@
 // 추후 완전한 구현을 통해 보완할 예정입니다.
 
 use chrono::{DateTime, Utc};
-use mysql_async::{prelude::*, Row, FromRowError};
 use prost_types::Timestamp;
-use tracing::error;
 use std::convert::TryFrom;
 use sqlx::FromRow;
 
 // 초(seconds) 값을 DateTime<Utc>로 변환
 pub fn datetime_from_seconds(seconds: i64) -> DateTime<Utc> {
-    let naive = chrono::NaiveDateTime::from_timestamp_opt(seconds, 0).unwrap_or_default();
-    chrono::DateTime::from_naive_utc_and_offset(naive, chrono::Utc)
+    DateTime::<Utc>::from_timestamp(seconds, 0).unwrap_or_else(|| Utc::now())
 }
 
 // i64 초 값을 Timestamp로 변환

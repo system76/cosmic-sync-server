@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, warn, error, debug};
+use tracing::{info, error, debug};
 use crate::storage::{Storage, memory::MemoryStorage, FileStorage};
     use crate::storage::mysql::MySqlStorage;
 use crate::storage::mysql_watcher::MySqlWatcherExt;
@@ -14,17 +14,14 @@ use crate::error::AppError;
 use crate::server::notification_manager::NotificationManager;
 use crate::server::event_bus::{EventBus, NoopEventBus};
 use std::sync::Mutex;
-use chrono::{Utc, Duration, DateTime};
+use chrono::{Utc, DateTime};
 use tokio::sync::RwLock;
-use std::path::PathBuf;
-use std::fs;
-use std::fs::File;
-use std::io::Write;
+ 
 use crate::server::connection_handler::ConnectionHandler;
 use crate::server::connection_tracker::ConnectionTracker;
 use crate::server::connection_cleanup::{create_default_cleanup_scheduler, create_default_stats_reporter};
 use dashmap::DashMap;
-use mysql_async::Opts;
+ 
 
 /// Structure to store authentication session information
 #[derive(Debug, Clone)]
@@ -90,55 +87,18 @@ impl AppState {
     async fn initialize_storage(url: &str) -> Result<Arc<dyn Storage>, AppError> {
         if url.starts_with("mysql://") {
             info!("Using MySQL storage");
-            // parse MySQL connection URL (mysql://user:password@host:port/database format)
-            let mut parts = url.split("://");
-            let _ = parts.next(); // skip "mysql" part
-            
-            if let Some(conn_info) = parts.next() {
-                let mut auth_host_parts = conn_info.split('@');
-                
-                // extract user info
-                let auth_part = auth_host_parts.next().unwrap_or("");
-                let mut auth_parts = auth_part.split(':');
-                let user = auth_parts.next().unwrap_or("");
-                let password = auth_parts.next().unwrap_or("");
-                
-                // extract host info
-                let host_part = auth_host_parts.next().unwrap_or("");
-                let mut host_parts = host_part.split('/');
-                let host_port = host_parts.next().unwrap_or("");
-                let mut host_port_parts = host_port.split(':');
-                let host = host_port_parts.next().unwrap_or("");
-                let port_str = host_port_parts.next().unwrap_or("3306");
-                let port = port_str.parse::<u16>().unwrap_or(3306);
-                
-                // extract database name
-                let database = host_parts.next().unwrap_or("");
-                
-                // 연결 URL 생성
-                let connection_url = format!("mysql://{}:{}@{}:{}/{}", user, password, host, port, database);
-                
-                // Opts 생성
-                let opts = mysql_async::Opts::from_url(&connection_url)
-                    .map_err(|e| AppError::Storage(format!("Failed to parse MySQL connection URL: {}", e)))?;
-                
-                // initialize MySQL storage
-                match MySqlStorage::new(opts) {
-                    Ok(storage) => {
-                        // initialize schema
-                        if let Err(e) = storage.init_schema().await {
-                            error!("Failed to initialize MySQL schema: {}", e);
-                            return Err(AppError::Storage(format!("Failed to initialize MySQL schema: {}", e)));
-                        }
-                        Ok(Arc::new(storage))
-                    },
-                    Err(e) => {
-                        error!("Failed to initialize MySQL storage: {}", e);
-                        Err(AppError::Storage(format!("Failed to connect to MySQL: {}", e)))
+            match MySqlStorage::new_with_url(url).await {
+                Ok(storage) => {
+                    if let Err(e) = storage.init_schema().await {
+                        error!("Failed to initialize MySQL schema: {}", e);
+                        return Err(AppError::Storage(format!("Failed to initialize MySQL schema: {}", e)));
                     }
+                    Ok(Arc::new(storage))
+                },
+                Err(e) => {
+                    error!("Failed to initialize MySQL storage: {}", e);
+                    Err(AppError::Storage(format!("Failed to connect to MySQL: {}", e)))
                 }
-            } else {
-                Err(AppError::Config("Invalid MySQL URL format".to_string()))
             }
         } else {
             info!("Unknown storage URL scheme, using in-memory storage");

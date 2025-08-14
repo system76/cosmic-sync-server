@@ -31,7 +31,10 @@ pub fn generate_state_token() -> String {
 
 /// generate temporary token
 pub fn generate_session_token() -> String {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let random = thread_rng().gen::<u64>();
     format!("token_{}_{}", now, random)
 }

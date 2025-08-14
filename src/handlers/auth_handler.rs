@@ -347,12 +347,15 @@ impl AuthHandler {
         debug!("Processing auth success notification: {}", notification.session_id);
         
         // update session
-        self.update_session(
-            &notification.device_hash, 
-            &notification.auth_token, 
-            &notification.account_hash, 
-            &notification.encryption_key
-        );
+        if let Err(e) = self.update_session(
+            &notification.device_hash,
+            &notification.auth_token,
+            &notification.account_hash,
+            &notification.encryption_key,
+        ) {
+            error!("Failed to update auth session: {}", e);
+            return Err(format!("Failed to update auth session: {}", e));
+        }
         
         // directly process
         let token = crate::models::auth::AuthToken {

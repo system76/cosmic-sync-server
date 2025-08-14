@@ -1,4 +1,10 @@
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
+
+// Simple memoization cache for hot path normalization
+static NORMALIZE_CACHE: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::with_capacity(1024)));
 
 /// Format a datetime for display
 pub fn format_datetime(dt: &DateTime<Utc>) -> String {
@@ -26,25 +32,44 @@ pub fn format_file_size(size: usize) -> String {
 /// This keeps relative paths starting with ~ unchanged for consistent storage
 /// and converts absolute paths to tilde-based paths when possible
 pub fn normalize_path_preserve_tilde(path: &str) -> String {
+    // Fast path: check cache first
+    if path.len() <= 256 { // avoid caching excessively long keys
+        if let Ok(cache) = NORMALIZE_CACHE.lock() {
+            if let Some(v) = cache.get(path) {
+                return v.clone();
+            }
+        }
+    }
+
     // Handle null or empty paths
     if path.is_empty() {
-        return "~/".to_string();
+        let v = "~/".to_string();
+        if path.len() <= 256 {
+            if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); }
+        }
+        return v;
     }
     
     // Handle whitespace-only paths
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
-        return "~/".to_string();
+        let v = "~/".to_string();
+        if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+        return v;
     }
     
     // Handle paths that are already tilde-based
     if trimmed_path == "~" || trimmed_path == "~/." {
-        return "~/".to_string();
+        let v = "~/".to_string();
+        if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+        return v;
     }
     
     if trimmed_path.starts_with("~/") {
         // Keep the tilde prefix as-is for consistent relative path storage
-        return trimmed_path.to_string();
+        let v = trimmed_path.to_string();
+        if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+        return v;
     }
     
     // Handle absolute paths
@@ -53,7 +78,9 @@ pub fn normalize_path_preserve_tilde(path: &str) -> String {
         if trimmed_path.starts_with("/home/") {
             // Ensure we have enough characters for safe processing
             if trimmed_path.len() <= 6 {
-                return "~".to_string();
+                let v = "~".to_string();
+                if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                return v;
             }
             
             // Look for the next slash after /home/
@@ -62,20 +89,30 @@ pub fn normalize_path_preserve_tilde(path: &str) -> String {
                 // Found pattern: /home/username/...
                 let remaining_path = &after_home[slash_pos..];
                 if remaining_path.is_empty() || remaining_path == "/" {
-                    return "~".to_string();
+                    let v = "~".to_string();
+                    if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                    return v;
                 } else {
-                    return format!("~{}", remaining_path);
+                    let v = format!("~{}", remaining_path);
+                    if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                    return v;
                 }
             } else {
                 // Pattern: /home/username (no trailing path)
-                return "~".to_string();
+                let v = "~".to_string();
+                if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                return v;
             }
         } else {
             // Other absolute paths: /path -> ~/path (but handle root specially)
             if trimmed_path == "/" {
-                return "~".to_string();
+                let v = "~".to_string();
+                if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                return v;
             } else {
-                return format!("~{}", trimmed_path);
+                let v = format!("~{}", trimmed_path);
+                if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                return v;
             }
         }
     }
@@ -83,13 +120,19 @@ pub fn normalize_path_preserve_tilde(path: &str) -> String {
     // Handle relative paths starting with ./
     if trimmed_path.starts_with("./") {
         if trimmed_path.len() <= 2 {
-            return "~".to_string();
+            let v = "~".to_string();
+            if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+            return v;
         } else {
             let after_dot = &trimmed_path[2..];
             if after_dot.is_empty() {
-                return "~".to_string();
+                let v = "~".to_string();
+                if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                return v;
             } else {
-                return format!("~/{}", after_dot);
+                let v = format!("~/{}", after_dot);
+                if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+                return v;
             }
         }
     }
@@ -98,16 +141,22 @@ pub fn normalize_path_preserve_tilde(path: &str) -> String {
     if trimmed_path.starts_with(".config/") || 
        trimmed_path.starts_with(".local/") || 
        trimmed_path.starts_with(".cache/") {
-        return format!("~/{}", trimmed_path);
+        let v = format!("~/{}", trimmed_path);
+        if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+        return v;
     }
     
     // Handle single filename without path
     if !trimmed_path.contains('/') {
-        return format!("~/{}", trimmed_path);
+        let v = format!("~/{}", trimmed_path);
+        if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+        return v;
     }
     
     // Handle other relative paths
-    return format!("~/{}", trimmed_path);
+    let v = format!("~/{}", trimmed_path);
+    if path.len() <= 256 { if let Ok(mut cache) = NORMALIZE_CACHE.lock() { cache.insert(path.to_string(), v.clone()); } }
+    return v;
 }
 
 /// Check if a path is a home directory relative path

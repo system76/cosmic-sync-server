@@ -3,6 +3,7 @@ use std::sync::Arc;
 use dotenv::dotenv;
 use tracing::{info, error, warn, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use cosmic_sync_server::config::constants;
 
 use cosmic_sync_server::{
     server::startup::start_server,
@@ -224,9 +225,9 @@ fn validate_server_config(config: &ServerConfig) -> Result<()> {
         return Err(SyncError::Config("Server host cannot be empty".to_string()));
     }
     
-    if config.port < 1024 || config.port > 65535 {
+    if config.port < constants::MIN_VALID_PORT as u16 || config.port > constants::MAX_VALID_PORT as u16 {
         return Err(SyncError::Config(
-            format!("Invalid port: {}. Must be between 1024 and 65535", config.port)
+            format!("Invalid port: {}. Must be between {} and {}", config.port, constants::MIN_VALID_PORT, constants::MAX_VALID_PORT)
         ));
     }
     

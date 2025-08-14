@@ -291,28 +291,28 @@ impl ConfigLoader {
     pub async fn get_server_config(&self) -> super::settings::ServerConfig {
         use super::settings::ServerConfig;
 
-        let host = self.get_config_value("SERVER_HOST", Some("0.0.0.0")).await
-            .unwrap_or_else(|| "0.0.0.0".to_string());
+        let host = self.get_config_value("SERVER_HOST", Some(crate::config::constants::DEFAULT_GRPC_HOST)).await
+            .unwrap_or_else(|| crate::config::constants::DEFAULT_GRPC_HOST.to_string());
         
         // Use GRPC_PORT (infrastructure standard)
-        let port = self.get_config_value("GRPC_PORT", Some("50051")).await
+        let port = self.get_config_value("GRPC_PORT", Some(&crate::config::constants::DEFAULT_GRPC_PORT.to_string())).await
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(50051);
+            .unwrap_or(crate::config::constants::DEFAULT_GRPC_PORT);
         
         let storage_path = self.get_config_value("STORAGE_PATH", None).await;
-        let worker_threads = self.get_config_value("WORKER_THREADS", Some("4")).await
+        let worker_threads = self.get_config_value("WORKER_THREADS", Some(&crate::config::constants::DEFAULT_WORKER_THREADS.to_string())).await
             .and_then(|t| t.parse::<usize>().ok())
-            .unwrap_or(4);
-        let auth_token_expiry_hours = self.get_config_value("AUTH_TOKEN_EXPIRY_HOURS", Some("24")).await
+            .unwrap_or(crate::config::constants::DEFAULT_WORKER_THREADS);
+        let auth_token_expiry_hours = self.get_config_value("AUTH_TOKEN_EXPIRY_HOURS", Some(&crate::config::constants::DEFAULT_AUTH_TOKEN_EXPIRY_HOURS.to_string())).await
             .and_then(|h| h.parse::<i64>().ok())
-            .unwrap_or(24);
+            .unwrap_or(crate::config::constants::DEFAULT_AUTH_TOKEN_EXPIRY_HOURS);
         
         // Parse file size with support for string formats like "2MB", "50MB"
-        let max_file_size = self.parse_file_size("MAX_FILE_SIZE", "50MB").await;
+        let max_file_size = self.parse_file_size("MAX_FILE_SIZE", &crate::config::constants::DEFAULT_MAX_FILE_SIZE_BYTES.to_string()).await;
         
-        let max_concurrent_requests = self.get_config_value("MAX_CONCURRENT_REQUESTS", Some("100")).await
+        let max_concurrent_requests = self.get_config_value("MAX_CONCURRENT_REQUESTS", Some(&crate::config::constants::DEFAULT_MAX_CONCURRENT_REQUESTS.to_string())).await
             .and_then(|r| r.parse::<usize>().ok())
-            .unwrap_or(100);
+            .unwrap_or(crate::config::constants::DEFAULT_MAX_CONCURRENT_REQUESTS);
 
         ServerConfig {
             host,
@@ -334,11 +334,46 @@ impl ConfigLoader {
             .parse()
             .unwrap_or(StorageType::Database);
 
-        let s3 = self.get_s3_config().await;
+        let region = self.get_config_value("AWS_REGION", Some(crate::config::constants::DEFAULT_S3_REGION)).await
+            .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_REGION.to_string());
+        let bucket = self.get_config_value("S3_BUCKET", Some(crate::config::constants::DEFAULT_S3_BUCKET)).await
+            .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_BUCKET.to_string());
+        let key_prefix = self.get_config_value("S3_KEY_PREFIX", Some(crate::config::constants::DEFAULT_S3_KEY_PREFIX)).await
+            .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string());
+        let access_key_id = self.get_config_value("AWS_ACCESS_KEY_ID", None).await;
+        let secret_access_key = self.get_config_value("AWS_SECRET_ACCESS_KEY", None).await;
+        let session_token = self.get_config_value("AWS_SESSION_TOKEN", None).await;
+        let endpoint_url = self.get_config_value("S3_ENDPOINT_URL", None).await;
+        let force_path_style = self.get_config_value("S3_FORCE_PATH_STYLE", Some(if crate::config::constants::DEFAULT_S3_FORCE_PATH_STYLE {"true"} else {"false"})).await
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(crate::config::constants::DEFAULT_S3_FORCE_PATH_STYLE);
+        let use_secret_manager = self.get_config_value("USE_AWS_SECRET_MANAGER", Some(if crate::config::constants::DEFAULT_S3_USE_SECRET_MANAGER {"true"} else {"false"})).await
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(crate::config::constants::DEFAULT_S3_USE_SECRET_MANAGER);
+        let secret_name = self.get_config_value("AWS_SECRET_NAME", None).await;
+        let timeout_seconds = self.get_config_value("S3_TIMEOUT_SECONDS", Some(&crate::config::constants::DEFAULT_S3_TIMEOUT_SECONDS.to_string())).await
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_S3_TIMEOUT_SECONDS);
+        let max_retries = self.get_config_value("S3_MAX_RETRIES", Some(&crate::config::constants::DEFAULT_S3_MAX_RETRIES.to_string())).await
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_S3_MAX_RETRIES);
 
         StorageConfig {
             storage_type,
-            s3,
+            s3: super::settings::S3Config {
+                region,
+                bucket,
+                key_prefix,
+                access_key_id,
+                secret_access_key,
+                session_token,
+                endpoint_url,
+                force_path_style,
+                use_secret_manager,
+                secret_name,
+                timeout_seconds,
+                max_retries,
+            },
         }
     }
 

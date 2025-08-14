@@ -1,5 +1,5 @@
 use chrono::prelude::*;
-use mysql_async::prelude::*;
+// migrated to sqlx; removed mysql_async
 use tracing::{debug, error, info};
 
 use crate::models::auth::AuthToken;
@@ -27,57 +27,45 @@ pub trait MySqlAuthExt {
 impl MySqlAuthExt for MySqlStorage {
     /// 인증 토큰 생성
     async fn create_auth_token(&self, auth_token: &AuthToken) -> Result<()> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
         // refresh_token이 옵션 타입이므로 적절하게 처리
         let refresh_token = auth_token.refresh_token.as_deref().unwrap_or("");
-        let scope = auth_token.scope.as_deref().unwrap_or("");
+        let _scope = auth_token.scope.as_deref().unwrap_or("");
         
-        // 인증 토큰 정보 삽입
-        conn.exec_drop(
-            r"INSERT INTO auth_tokens (
+        // 인증 토큰 정보 삽입 (sqlx)
+        sqlx::query(
+            r#"INSERT INTO auth_tokens (
                 id, account_hash, access_token, refresh_token,
                 token_type, expires_at, created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                &auth_token.token_id,
-                &auth_token.account_hash,
-                &auth_token.access_token,
-                refresh_token,
-                &auth_token.token_type,
-                auth_token.expires_at.timestamp(),
-                auth_token.created_at.timestamp(),
-            ),
-        ).await.map_err(|e| {
-            StorageError::Database(format!("Failed to insert auth token: {}", e))
-        })?;
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)"#
+        )
+        .bind(&auth_token.token_id)
+        .bind(&auth_token.account_hash)
+        .bind(&auth_token.access_token)
+        .bind(refresh_token)
+        .bind(&auth_token.token_type)
+        .bind(auth_token.expires_at.timestamp())
+        .bind(auth_token.created_at.timestamp())
+        .execute(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to insert auth token: {}", e)))?;
         
         Ok(())
     }
     
     /// 인증 토큰 조회
     async fn get_auth_token(&self, token: &str) -> Result<Option<AuthToken>> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("데이터베이스 연결 실패: {}", e))
-        })?;
-        
         debug!("데이터베이스에서 인증 토큰 조회: {}", token);
-        
-        // 토큰으로 인증 정보 조회
-        let token_data: Option<(String, String, String, String, Option<String>, i64, i64)> = conn.exec_first(
-            r"SELECT 
+        let token_data: Option<(String, String, String, String, Option<String>, i64, i64)> = sqlx::query_as(
+            r#"SELECT 
                 id, account_hash, access_token, token_type, 
                 refresh_token, expires_at, created_at
               FROM auth_tokens 
-              WHERE access_token = ?",
-            (token,)
-        ).await.map_err(|e| {
-            StorageError::Database(format!("토큰 조회 쿼리 실패: {}", e))
-        })?;
+              WHERE access_token = ?"#
+        )
+        .bind(token)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("토큰 조회 쿼리 실패: {}", e)))?;
         
         match token_data {
             Some((token_id, account_hash, access_token, token_type, refresh_token, expires_at, created_at)) => {
@@ -122,23 +110,22 @@ impl MySqlAuthExt for MySqlStorage {
     
     /// 인증 토큰 검증
     async fn validate_auth_token(&self, token: &str, account_hash: &str) -> Result<bool> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
         let now = chrono::Utc::now().timestamp();
         
         // 유효한 토큰이 있는지 확인 (만료되지 않은)
-        let result: Option<(String,)> = conn.exec_first(
-            r"SELECT account_hash 
+        let result: Option<String> = sqlx::query_scalar(
+            r#"SELECT account_hash 
             FROM auth_tokens 
             WHERE access_token = ? 
             AND account_hash = ? 
-            AND expires_at > ?",
-            (token, account_hash, now)
-        ).await.map_err(|e| StorageError::Database(e.to_string()))?;
-        
+            AND expires_at > ?"#
+        )
+        .bind(token)
+        .bind(account_hash)
+        .bind(now)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(result.is_some())
     }
     
@@ -150,15 +137,11 @@ impl MySqlAuthExt for MySqlStorage {
     
     /// 인증 토큰 삭제
     async fn delete_auth_token(&self, token: &str) -> Result<()> {
-        let pool = self.get_pool();
-        let mut conn = pool.get_conn().await.map_err(|e| {
-            StorageError::Database(format!("Failed to get connection: {}", e))
-        })?;
-        
-        conn.exec_drop(
-            "DELETE FROM auth_tokens WHERE access_token = ?",
-            (token,)
-        ).await.map_err(|e| StorageError::Database(e.to_string()))?;
+        sqlx::query(r#"DELETE FROM auth_tokens WHERE access_token = ?"#)
+            .bind(token)
+            .execute(self.get_sqlx_pool())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
         
         Ok(())
     }

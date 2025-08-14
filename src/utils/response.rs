@@ -1,7 +1,6 @@
 use crate::sync::{
     UploadFileResponse, DownloadFileResponse, DeleteFileResponse,
-    RegisterDeviceResponse, UpdateDeviceInfoResponse,
-    RegisterWatcherGroupResponse, UpdateWatcherGroupResponse,
+    RegisterDeviceResponse,
 };
 
 /// Create error response for file upload
