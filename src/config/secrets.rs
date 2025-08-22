@@ -358,6 +358,13 @@ impl ConfigLoader {
             .and_then(|v| v.parse().ok())
             .unwrap_or(crate::config::constants::DEFAULT_S3_MAX_RETRIES);
 
+        let file_ttl_secs = self.get_config_value("FILE_TTL_SECS", Some(&crate::config::constants::DEFAULT_FILE_TTL_SECS.to_string())).await
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_FILE_TTL_SECS);
+        let max_file_revisions = self.get_config_value("MAX_FILE_REVISIONS", Some(&crate::config::constants::DEFAULT_MAX_FILE_REVISIONS.to_string())).await
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_MAX_FILE_REVISIONS);
+
         StorageConfig {
             storage_type,
             s3: super::settings::S3Config {
@@ -374,6 +381,8 @@ impl ConfigLoader {
                 timeout_seconds,
                 max_retries,
             },
+            file_ttl_secs,
+            max_file_revisions,
         }
     }
 
@@ -442,6 +451,7 @@ impl ConfigLoader {
         let storage = self.get_storage_config().await;
         let logging = self.get_logging_config().await;
         let features = self.get_feature_flags().await;
+        let message_broker = super::settings::MessageBrokerConfig::load();
 
         info!("Configuration loaded successfully");
 
@@ -451,6 +461,7 @@ impl ConfigLoader {
             storage,
             logging,
             features,
+            message_broker,
         }
     }
 } 

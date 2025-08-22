@@ -280,17 +280,11 @@ impl FileService {
                         info!("   → 💡 File will be synchronized when clients reconnect and subscribe");
                     }
                 },
-                Err(e) => {
-                    // 알림 전송 실패는 파일 저장에 영향을 주지 않도록 오류만 기록
-                    error!("⚠️ Notification system failure for {}: {}", file_info.filename, e);
-                    warn!("💾 File saved successfully but sync failed - manual intervention may be required");
-                    debug!("   → File details: file_id={}, account={}, size={}KB", 
-                           file_info.file_id, file_info.account_hash, file_info.size / 1024);
+                Err(e) => warn!("❌ Failed to broadcast file update to clients: {}", e),
                 }
             }
-        } else {
-            debug!("⚠️ Notification manager not available, skipping update notification");
-        }
+
+
     }
 
     /// Copy file data from one file to another (for version restoration)

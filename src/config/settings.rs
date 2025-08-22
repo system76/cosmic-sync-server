@@ -16,6 +16,8 @@ pub struct Config {
     pub logging: LoggingConfig,
     /// Feature flags
     pub features: FeatureFlags,
+    /// Message broker (RabbitMQ) configuration
+    pub message_broker: MessageBrokerConfig,
 }
 
 impl Default for Config {
@@ -26,6 +28,7 @@ impl Default for Config {
             storage: StorageConfig::default(),
             logging: LoggingConfig::default(),
             features: FeatureFlags::default(),
+            message_broker: MessageBrokerConfig::default(),
         }
     }
 }
@@ -39,6 +42,7 @@ impl Config {
             storage: StorageConfig::load(),
             logging: LoggingConfig::load(),
             features: FeatureFlags::load(),
+            message_broker: MessageBrokerConfig::load(),
         }
     }
     
@@ -357,7 +361,10 @@ pub struct StorageConfig {
     pub storage_type: StorageType,
     /// S3 configuration (when storage_type is S3)
     pub s3: S3Config,
-
+    /// Retention TTL in seconds for deleted data (logical -> physical purge)
+    pub file_ttl_secs: i64,
+    /// Maximum number of revisions to keep per file path
+    pub max_file_revisions: i32,
 }
 
 impl Default for StorageConfig {
@@ -365,7 +372,8 @@ impl Default for StorageConfig {
         Self {
             storage_type: StorageType::Database,
             s3: S3Config::default(),
-
+            file_ttl_secs: crate::config::constants::DEFAULT_FILE_TTL_SECS,
+            max_file_revisions: crate::config::constants::DEFAULT_MAX_FILE_REVISIONS,
         }
     }
 }
@@ -381,7 +389,8 @@ impl StorageConfig {
         Self {
             storage_type,
             s3: S3Config::load(),
-
+            file_ttl_secs: env::var("FILE_TTL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(crate::config::constants::DEFAULT_FILE_TTL_SECS),
+            max_file_revisions: env::var("MAX_FILE_REVISIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(crate::config::constants::DEFAULT_MAX_FILE_REVISIONS),
         }
     }
 }
@@ -461,6 +470,43 @@ impl S3Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(crate::config::constants::DEFAULT_S3_MAX_RETRIES),
         }
+    }
+}
+
+/// Message broker configuration settings (RabbitMQ)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageBrokerConfig {
+    /// Enable RabbitMQ-backed EventBus
+    pub enabled: bool,
+    /// AMQP URL, e.g. amqp://user:pass@host:5672/vhost
+    pub url: String,
+    /// Exchange name to publish/consume
+    pub exchange: String,
+    /// Queue name prefix for dynamically created queues
+    pub queue_prefix: String,
+    /// Prefetch size per consumer for better throughput
+    pub prefetch: u16,
+    /// Durable exchange/queue
+    pub durable: bool,
+}
+
+impl Default for MessageBrokerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: env::var("RABBITMQ_URL").unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".to_string()),
+            exchange: env::var("RABBITMQ_EXCHANGE").unwrap_or_else(|_| "cosmic.sync".to_string()),
+            queue_prefix: env::var("RABBITMQ_QUEUE_PREFIX").unwrap_or_else(|_| "cosmic.sync".to_string()),
+            prefetch: env::var("RABBITMQ_PREFETCH").ok().and_then(|v| v.parse::<u16>().ok()).unwrap_or(200),
+            durable: env::var("RABBITMQ_DURABLE").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true),
+        }
+    }
+}
+
+impl MessageBrokerConfig {
+    pub fn load() -> Self {
+        let enabled = env::var("RABBITMQ_ENABLED").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false);
+        Self { enabled, ..Self::default() }
     }
 }
 

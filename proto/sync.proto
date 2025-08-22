@@ -88,6 +88,7 @@ message SubscribeRequest {
     string account_hash = 1;
     string device_hash = 2;
     string auth_token = 3;
+    int64 since_ts = 4; // Incremental sync watermark (Unix seconds); 0 for full sync
 }
 
 // 인증 상태 업데이트 알림

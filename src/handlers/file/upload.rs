@@ -59,11 +59,65 @@ pub async fn handle_upload_file(handler: &FileHandler, req: UploadFileRequest) -
     // 7. Create file info with server IDs
     let mut req_server = req.clone();
     req_server.account_hash = server_account_hash.clone();
-    let file_info = handler.app_state.file.build_file_info_for_upload(&req_server, file_id, normalized_file_path, server_group_id, server_watcher_id);
+    let file_info = handler.app_state.file.build_file_info_for_upload(&req_server, file_id, normalized_file_path.clone(), server_group_id, server_watcher_id);
 
     // 8. Store file via FileService
     match handler.app_state.file.store_file(&file_info, &req.file_data).await {
-        Ok(_) => Ok(Response::new(response::file_upload_success(file_id, req.revision + 1))),
+        Ok(_) => {
+            // Publish cross-instance file upload event
+            let routing_key = format!(
+                "file.uploaded.{}.{}.{}",
+                server_account_hash,
+                server_group_id,
+                server_watcher_id
+            );
+            let payload = serde_json::json!({
+                "type": "file_uploaded",
+                "id": nanoid::nanoid!(8),
+                "account_hash": server_account_hash,
+                "device_hash": req.device_hash,
+                "group_id": server_group_id,
+                "watcher_id": server_watcher_id,
+                "file_path": normalized_file_path,
+                "filename": req.filename,
+                "file_id": file_id,
+                "file_size": req.file_size,
+                "revision": req.revision + 1,
+                "timestamp": chrono::Utc::now().timestamp(),
+            })
+            .to_string()
+            .into_bytes();
+            if let Err(e) = handler.app_state.event_bus.publish(&routing_key, payload).await {
+                debug!("EventBus publish failed (noop or disconnected): {}", e);
+            }
+
+            // Publish version created event
+            let routing_key = format!(
+                "version.created.{}.{}",
+                server_account_hash,
+                file_id
+            );
+            let payload = serde_json::json!({
+                "type": "version_created",
+                "id": nanoid::nanoid!(8),
+                "account_hash": server_account_hash,
+                "device_hash": req.device_hash,
+                "group_id": server_group_id,
+                "watcher_id": server_watcher_id,
+                "file_path": normalized_file_path,
+                "filename": req.filename,
+                "file_id": file_id,
+                "revision": req.revision + 1,
+                "timestamp": chrono::Utc::now().timestamp(),
+            })
+            .to_string()
+            .into_bytes();
+            if let Err(e) = handler.app_state.event_bus.publish(&routing_key, payload).await {
+                debug!("EventBus publish failed (noop or disconnected): {}", e);
+            }
+
+            Ok(Response::new(response::file_upload_success(file_id, req.revision + 1)))
+        }
         Err(e) => {
             error!("File storage failed: {}", e);
             Ok(Response::new(response::file_upload_error(&format!("File storage failed: {}", e))))

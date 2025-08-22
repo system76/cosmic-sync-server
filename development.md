@@ -144,4 +144,76 @@ This document distills project-wide development knowledge that helps LLMs implem
 
 This guide is designed for LLM agents to make safe, incremental edits without regressing core flows (OAuth, file sync, watcher mapping). Always respect canonical `account_hash` (token), `watcher_group` as the user’s unit, and avoid duplicating storage initialization.
 
+### Message Broker and Event Bus (RabbitMQ)
+- Event bus abstraction: `src/server/event_bus.rs`
+  - `EventBus` trait with `publish` and `subscribe`
+  - `NoopEventBus` (fallback when disabled)
+  - `RabbitMqEventBus` (lapin-based, topic exchange, publisher confirms)
+- Configuration: `MessageBrokerConfig` in `src/config/settings.rs`
+  - Environment variables (examples):
+    - `MESSAGE_BROKER_ENABLED=1|0`
+    - `MESSAGE_BROKER_URL=amqps://user:pass@host:5671/vhost`
+    - `MESSAGE_BROKER_EXCHANGE=cosmic.sync`
+    - `MESSAGE_BROKER_QUEUE_PREFIX=cosmic` (consumer queues derive from this)
+    - `MESSAGE_BROKER_PREFETCH=64` (per-consumer QoS)
+    - `MESSAGE_BROKER_DURABLE=true`
+    - Optional consumer tuning:
+      - `RETRY_TTL_MS=5000` (retry delay for invalid payloads)
+      - `MAX_RETRIES=3` (after this, message goes to DLQ)
+- Publishing patterns (topic routing keys):
+  - Files: `file.uploaded.{account_hash}.{group_id}.{watcher_id}`, `file.deleted.{account_hash}`
+  - Versions: `version.created.{account_hash}.{file_id}`, `version.deleted.{account_hash}.{file_id}`, `version.restored.{account_hash}.{file_id}`
+  - Devices: `device.registered.{account_hash}`, `device.updated.{account_hash}`
+  - Watchers: `watcher.group.update.{account_hash}`, `watcher.preset.update.{account_hash}`
+- Emission sites (handlers layer):
+  - Upload: `src/handlers/file/upload.rs` → publishes `file.uploaded`, `version.created`
+  - Delete: `src/handlers/file/delete.rs` → publishes `file.deleted`, `version.deleted`
+  - Restore: `src/handlers/sync_handler.rs` (broadcast) → publishes `version.restored`
+  - Note: Service layer does not publish directly; handlers are the single point for side effects
+- Consumer sample: `src/bin/rabbit_consumer.rs`
+  - Subscribes to `file.*.#`, `version.*.#`, `device.*.#`, `watcher.*.update.#`
+  - Declares DLX (`<exchange>.dlx`), durable queues, retry queues (TTL), and DLQ
+  - Simple idempotency via in-process cache (consider Redis/MySQL for production)
+  - Run: `sudo -E /home/yongjinchong/.cargo/bin/cargo run --bin rabbit_consumer`
+
+### Centralized Constants and Settings
+- Central constants: `src/config/constants.rs` (ports, HTTP keepalive, DB/S3 defaults, etc.)
+- Settings model: `src/config/settings.rs`
+  - Uses constants for defaults
+  - Includes `MessageBrokerConfig`
+- Secrets/config loader: `src/config/secrets.rs`
+  - Ensures `message_broker` is populated in the composite `Config`
+
+### Tests Layout (Unified)
+- Integration/scenario tests live under top-level `tests/`
+  - Shared helpers: `tests/common/mod.rs`
+  - Examples: `tests/device_handler_integration.rs`, `tests/grpc_auth_status.rs`
+- Unit tests may remain inline with `#[cfg(test)]` in modules
+- Running:
+  - `sudo -E /home/yongjinchong/.cargo/bin/cargo test --no-run` (compile)
+  - `sudo -E /home/yongjinchong/.cargo/bin/cargo test` (execute)
+
+### Performance Optimizations
+- S3 client lazy init: `tokio::sync::OnceCell` in `src/storage/file_storage.rs`
+  - One-time bucket existence check; internal `get_client().await?` APIs
+- Path normalization memoization: `once_cell::sync::Lazy + Mutex<HashMap>` in `src/utils/helpers.rs`
+  - Short inputs cached to reduce repeated work
+- Error handling hardening: replaced `unwrap/expect` in critical paths
+- Event emission at handler layer to avoid redundant work or circular deps
+
+### Quick Runbook (updated)
+- Build (prefer lbuild):
+  - `sudo -E /home/yongjinchong/.cargo/bin/cargo lbuild`
+- Run server (debug):
+  - `./target/debug/cosmic-sync-server`
+- Run consumer (debug):
+  - Set `MESSAGE_BROKER_ENABLED=1` and broker env vars
+  - `sudo -E /home/yongjinchong/.cargo/bin/cargo run --bin rabbit_consumer`
+
+### Pitfalls and Conventions (event-driven)
+- Do not publish from service layer; consolidate side effects in handlers
+- Standardize event payloads to JSON; include `account_hash`, `device_hash`, identifiers, and `timestamp`
+- Prefer topic routing keys that reflect domain: `entity.action.dimensions...`
+- For idempotency, add an `id` to payloads (e.g., `nanoid`) and enforce at consumers
+
 

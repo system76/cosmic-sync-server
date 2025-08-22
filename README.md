@@ -17,6 +17,7 @@ COSMIC Sync Server is a server for synchronizing user settings and files in Syst
 - Rust 1.70.0 or higher
 - MySQL or MariaDB
 - Protobuf compiler (protoc)
+- (Optional) RabbitMQ broker if enabling message bus
 
 ### Environment Configuration
 
@@ -60,10 +61,21 @@ OAUTH_TOKEN_URL=https://oauth-provider.com/token
 OAUTH_USER_INFO_URL=https://oauth-provider.com/userinfo
 
 # Feature flags
-TEST_MODE=false
+test_MODE=false
 DEBUG_MODE=false
 METRICS_ENABLED=true
 STORAGE_ENCRYPTION=true
+
+# Message broker (RabbitMQ)
+MESSAGE_BROKER_ENABLED=false
+MESSAGE_BROKER_URL=amqps://user:pass@host:5671/vhost
+MESSAGE_BROKER_EXCHANGE=cosmic.sync
+MESSAGE_BROKER_QUEUE_PREFIX=cosmic
+MESSAGE_BROKER_PREFETCH=64
+MESSAGE_BROKER_DURABLE=true
+# Consumer tuning (optional)
+RETRY_TTL_MS=5000
+MAX_RETRIES=3
 ```
 
 ### Database Preparation
@@ -80,11 +92,14 @@ The server will initialize the necessary tables when first started.
 ### Running the Server
 
 ```bash
+# Build (prefer filtered lbuild)
+sudo -E /home/yongjinchong/.cargo/bin/cargo lbuild
+
 # Run in development mode
-cargo run
+./target/debug/cosmic-sync-server
 
 # Build and run in release mode
-cargo build --release
+sudo -E /home/yongjinchong/.cargo/bin/cargo build --release
 ./target/release/cosmic-sync-server
 ```
 
@@ -94,7 +109,7 @@ To run the server with specific environment variables and debug options:
 
 ```bash
 # Run with development mode, debug mode, and debug logging
-RUST_LOG=debug cargo run
+RUST_LOG=debug sudo -E /home/yongjinchong/.cargo/bin/cargo run
 
 # Run the compiled binary directly with root privileges
 RUST_LOG=debug sudo -E ./target/debug/cosmic-sync-server
@@ -111,6 +126,9 @@ The COSMIC Sync Server is organized into several modules:
 - **Models**: Data models for accounts, devices, files, etc.
 - **Auth**: Authentication and OAuth implementations
 - **Utils**: Utility functions for crypto, time, etc.
+- **Config**: Centralized constants and settings (including message broker)
+- **Event Bus**: RabbitMQ integration behind trait abstraction
+- **Tests**: Integration tests under top-level `tests/`
 
 ### Storage Module Architecture
 
@@ -129,122 +147,25 @@ The MySQL implementation is split into multiple files for better maintainability
 - `mysql_file.rs`: File storage and retrieval operations
 - `mysql_watcher.rs`: Watcher and synchronization operations
 
-## Database Structure
+## Event Bus (RabbitMQ)
 
-The COSMIC Sync Server uses a relational database (MySQL/MariaDB) to store user data, device information, files, and synchronization settings. Below is an overview of the main tables:
+- Abstraction: `src/server/event_bus.rs`
+  - `EventBus` trait with `publish`/`subscribe`
+  - `RabbitMqEventBus` (lapin) and `NoopEventBus` (disabled)
+- Routing keys (topic):
+  - Files: `file.uploaded.{account_hash}.{group_id}.{watcher_id}`, `file.deleted.{account_hash}`
+  - Versions: `version.created.{account_hash}.{file_id}`, `version.deleted.{account_hash}.{file_id}`, `version.restored.{account_hash}.{file_id}`
+  - Devices/Watchers as applicable
+- Emission sites: handlers layer (`src/handlers/...`), not services
+- Consumer example: `src/bin/rabbit_consumer.rs`
+  - Declares DLX (`<exchange>.dlx`), main/retry/DLQ queues, basic idempotency
+  - Run: `sudo -E /home/yongjinchong/.cargo/bin/cargo run --bin rabbit_consumer`
 
-### accounts
-- `id`: VARCHAR(36) - Unique identifier
-- `email`: VARCHAR(255) - User email
-- `account_hash`: VARCHAR(255) - Account hash (Primary Key)
-- `name`: VARCHAR(255) - User name
-- `password_hash`: VARCHAR(255) - Hashed password (for non-OAuth)
-- `salt`: VARCHAR(255) - Password salt (for non-OAuth)
-- `created_at`: BIGINT - Account creation timestamp
-- `updated_at`: BIGINT - Last update timestamp
-- `last_login`: BIGINT - Last login timestamp
-- `is_active`: BOOLEAN - Account status
+## Tests
 
-### devices
-- `id`: VARCHAR(36) - Unique identifier
-- `account_hash`: VARCHAR(255) - Reference to accounts table
-- `device_hash`: VARCHAR(255) - Device hash (Primary Key)
-- `device_name`: VARCHAR(255) - Device name
-- `device_type`: VARCHAR(50) - Device type
-- `os_type`: VARCHAR(50) - OS type
-- `os_version`: VARCHAR(50) - OS version
-- `app_version`: VARCHAR(50) - App version
-- `last_sync`: BIGINT - Last sync timestamp
-- `created_at`: BIGINT - Registration timestamp
-- `updated_at`: BIGINT - Last update timestamp
-- `is_active`: BOOLEAN - Device status
-
-### files
-- `id`: BIGINT UNSIGNED AUTO_INCREMENT - Internal ID (Primary Key)
-- `file_id`: BIGINT UNSIGNED - Unique file identifier
-- `account_hash`: VARCHAR(255) - Reference to accounts table
-- `device_hash`: VARCHAR(255) - Reference to devices table
-- `file_path`: VARCHAR(1024) - File path
-- `filename`: VARCHAR(255) - File name
-- `file_hash`: VARCHAR(255) - File hash
-- `ctime`: BIGINT - Creation timestamp
-- `mtime`: BIGINT - Modification timestamp
-- `size`: BIGINT - File size
-- `is_deleted`: BOOLEAN - Deletion status
-- `is_encrypted`: BOOLEAN - Encryption status
-- `revision`: BIGINT - File revision
-- `created_time`: BIGINT - Upload timestamp
-- `updated_time`: BIGINT - Last update timestamp
-- `group_id`: INT - Watcher group ID
-- `watcher_id`: INT - Watcher ID
-
-### file_data
-- `file_id`: BIGINT UNSIGNED - Reference to files table (Primary Key)
-- `data`: LONGBLOB - Actual file data
-- `created_at`: BIGINT - Creation timestamp
-- `updated_at`: BIGINT - Last update timestamp
-
-### auth_tokens
-- `id`: VARCHAR(36) - Token ID (Primary Key)
-- `account_hash`: VARCHAR(255) - Reference to accounts table
-- `access_token`: VARCHAR(1024) - Access token
-- `refresh_token`: VARCHAR(1024) - Refresh token
-- `token_type`: VARCHAR(20) - Token type
-- `expires_at`: BIGINT - Expiration timestamp
-- `created_at`: BIGINT - Creation timestamp
-
-### watcher_groups and related tables
-Tables for managing file watching and synchronization:
-- `watcher_groups`: Groups of watchers
-- `watchers`: Individual file watchers
-- `group_watchers`: Relationship between groups and watchers
-- `watcher_presets`: Preset configurations
-
-## API Documentation
-
-The server provides a gRPC API. The API definitions can be found in the `proto/sync.proto` file.
-
-Main API endpoints:
-
-1. Authentication API
-   - `Login` - User login
-   - `VerifyLogin` - Token verification
-   - `ExchangeOauthCode` - OAuth code exchange
-   - `ValidateToken` - Validate authentication token
-   - `CheckAuthStatus` - Check authentication status
-
-2. Device Management API
-   - `RegisterDevice` - Register a device
-   - `ListDevices` - List registered devices
-   - `DeleteDevice` - Delete a device
-   - `UpdateDeviceInfo` - Update device information
-
-3. File Synchronization API
-   - `UploadFile` - Upload a file
-   - `DownloadFile` - Download a file
-   - `ListFiles` - List available files
-   - `DeleteFile` - Delete a file
-   - `RequestEncryptionKey` - Request encryption key
-
-4. Watcher Management API
-   - `RegisterWatcherGroup` - Register a watcher group
-   - `UpdateWatcherGroup` - Update a watcher group
-   - `DeleteWatcherGroup` - Delete a watcher group
-   - `GetWatcherGroup` - Get a specific watcher group
-   - `GetWatcherGroups` - Get all watcher groups
-   - `RegisterWatcherPreset` - Register a watcher preset
-   - `UpdateWatcherPreset` - Update a watcher preset
-   - `GetWatcherPreset` - Get watcher presets
-
-5. Subscription API
-   - `SubscribeToFileChanges` - Subscribe to file changes
-   - `SubscribeToDeviceChanges` - Subscribe to device changes
-   - `SubscribeToWatcherChanges` - Subscribe to watcher changes
-   - `SubscribeToGroupChanges` - Subscribe to group changes
-   - `SubscribeToAuthChanges` - Subscribe to auth changes
-
-6. System API
-   - `HealthCheck` - Check server health
+- Integration tests live in `tests/` with shared utilities in `tests/common/mod.rs`
+- Quick compile: `sudo -E /home/yongjinchong/.cargo/bin/cargo test --no-run`
+- Run: `sudo -E /home/yongjinchong/.cargo/bin/cargo test`
 
 ## Development
 
@@ -253,10 +174,10 @@ Main API endpoints:
 After modifying the Protocol Buffer definitions, run the following command to generate Rust code:
 
 ```bash
-cargo build
+sudo -E /home/yongjinchong/.cargo/bin/cargo build
 ```
 
-The build.rs script will automatically compile the protobuf files.
+The `build.rs` script will automatically compile the protobuf files.
 
 ### Authentication Flow
 
@@ -285,7 +206,7 @@ Files are synchronized based on watcher groups:
 
 1. Client registers watcher groups for specific directories
 2. When files change, client uploads to server
-3. Server stores files in database with metadata
+3. Server stores files in database with metadata (or S3, depending on config)
 4. Other devices can download changed files
 5. Encryption is supported for secure file storage
 

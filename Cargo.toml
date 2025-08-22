@@ -114,6 +114,8 @@ aws-types = { version = "1.3" }
 dashmap = "5.5"
 
 once_cell = "1.19"
+lapin = { version = "2.3", default-features = false, features = ["native-tls"] }
+nanoid = "0.4"
 
 # Logging compatibility
 log = "0.4"

@@ -138,6 +138,8 @@ impl Component for SyncServerComponent {
         
         // Start client cleanup task
         self.app_state.start_client_cleanup_task();
+        // Start retention cleanup task
+        self.app_state.start_retention_cleanup_task();
         
         // Here we would start the actual gRPC server
         // For now, we'll simulate a successful start

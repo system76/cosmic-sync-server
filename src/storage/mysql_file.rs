@@ -54,6 +54,12 @@ pub trait MySqlFileExt {
 
     /// 파일 ID로 존재 여부와 삭제 상태 확인
     async fn check_file_exists(&self, file_id: u64) -> Result<(bool, bool)>;
+
+    /// TTL 기반 물리 삭제: is_deleted=1 이고 updated_time이 NOW()-ttl 초 이전인 레코드 제거
+    async fn purge_deleted_files_older_than(&self, ttl_secs: i64) -> Result<u64>;
+
+    /// 파일 경로 기준 리비전 상한: 각 (account_hash,file_path,server_group_id)별 최신 max_revisions만 유지하고 나머지는 is_deleted=1 처리
+    async fn trim_old_revisions(&self, max_revisions: i32) -> Result<u64>;
 }
 
 impl MySqlFileExt for MySqlStorage {
@@ -86,7 +92,7 @@ impl MySqlFileExt for MySqlStorage {
                 .bind(&file_info.device_hash)
                 .bind(updated_time)
                 .bind(file_info.size as i64)
-                .bind(file_info.file_id as i64)
+                .bind(file_info.file_id)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| { error!("❌ 파일 정보 업데이트 실패(sqlx): {}", e); StorageError::Database(format!("파일 정보 업데이트 실패: {}", e)) })?;
@@ -133,7 +139,7 @@ impl MySqlFileExt for MySqlStorage {
             debug!("🗑️ 기존 활성 파일 삭제 표시: existing_file_id={}", existing_file_id);
             
             sqlx::query(r#"UPDATE files SET is_deleted = TRUE WHERE file_id = ?"#)
-                .bind(existing_file_id as i64)
+                .bind(existing_file_id)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| { error!("❌ 기존 파일 삭제 표시 실패(sqlx): {}", e); StorageError::Database(format!("기존 파일 삭제 표시 실패: {}", e)) })?;
@@ -554,11 +560,11 @@ impl MySqlFileExt for MySqlStorage {
             .map_err(|e| StorageError::Database(format!("트랜잭션 시작 실패(sqlx): {}", e)))?;
         
         // 파일이 존재하고 사용자에게 속하는지 확인
-        let file_exists: Option<(i64, i64, String, String, String, i32, i32)> = sqlx::query_as(
+        let file_exists: Option<(u64, i64, String, String, String, i32, i32)> = sqlx::query_as(
             r#"SELECT file_id, revision, file_path, filename, device_hash, group_id, watcher_id
                FROM files WHERE file_id = ? AND account_hash = ?"#
         )
-        .bind(file_id as i64)
+        .bind(file_id)
         .bind(account_hash)
         .fetch_optional(&mut *tx)
         .await
@@ -583,7 +589,7 @@ impl MySqlFileExt for MySqlStorage {
         
         // 1. 기존 파일 레코드를 is_deleted=1로 업데이트
         sqlx::query(r#"UPDATE files SET is_deleted = 1 WHERE file_id = ?"#)
-            .bind(file_id as i64)
+            .bind(file_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| StorageError::Database(format!("기존 파일 삭제 표시 실패(sqlx): {}", e)))?;
@@ -609,7 +615,7 @@ impl MySqlFileExt for MySqlStorage {
         sqlx::query(r#"INSERT INTO files 
             (file_id, account_hash, device_hash, file_path, filename, file_hash, size) 
             VALUES (?, ?, ?, ?, ?, ?, ?)"#)
-            .bind(new_file_id as i64)
+            .bind(new_file_id)
             .bind(account_hash)
             .bind(&device_hash)
             .bind(&file_path)
@@ -634,7 +640,7 @@ impl MySqlFileExt for MySqlStorage {
             .bind(now)
             .bind(group_id)
             .bind(watcher_id)
-            .bind(new_file_id as i64)
+            .bind(new_file_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| StorageError::Database(format!("삭제 이력 추가 실패 (2단계, sqlx): {}", e)))?;
@@ -726,7 +732,7 @@ impl MySqlFileExt for MySqlStorage {
         debug!("🔍 기존 파일 데이터 확인 중...");
         // 기존 데이터 있는지 확인
         let exists: Option<u64> = sqlx::query_scalar(r#"SELECT file_id FROM file_data WHERE file_id = ?"#)
-            .bind(file_id as i64)
+            .bind(file_id)
             .fetch_optional(self.get_sqlx_pool())
             .await
             .map_err(|e| { error!("❌ 기존 데이터 확인 실패(sqlx): {}", e); StorageError::Database(e.to_string()) })?;
@@ -737,7 +743,7 @@ impl MySqlFileExt for MySqlStorage {
             sqlx::query(r#"UPDATE file_data SET data = ?, updated_at = ? WHERE file_id = ?"#)
                 .bind(data_bytes)
                 .bind(now)
-                .bind(file_id as i64)
+                .bind(file_id)
                 .execute(self.get_sqlx_pool())
                 .await
                 .map_err(|e| { error!("❌ 파일 데이터 업데이트 실패(sqlx): {}", e); StorageError::Database(e.to_string()) })?;
@@ -745,7 +751,7 @@ impl MySqlFileExt for MySqlStorage {
             // 새로 삽입
             info!("💾 새 파일 데이터 삽입: file_id={}", file_id);
             sqlx::query(r#"INSERT INTO file_data (file_id, data, created_at, updated_at) VALUES (?, ?, ?, ?)"#)
-                .bind(file_id as i64)
+                .bind(file_id)
                 .bind(data_bytes)
                 .bind(now)
                 .bind(now)
@@ -1013,5 +1019,51 @@ impl MySqlFileExt for MySqlStorage {
                 Ok((false, false))
             }
         }
+    }
+
+    /// TTL 기반 물리 삭제: is_deleted=1 이고 updated_time이 NOW()-ttl 초 이전인 레코드 제거
+    async fn purge_deleted_files_older_than(&self, ttl_secs: i64) -> Result<u64> {
+        let affected = sqlx::query(r#"DELETE FROM files WHERE is_deleted = 1 AND updated_time < FROM_UNIXTIME(UNIX_TIMESTAMP() - ?)"#)
+            .bind(ttl_secs)
+            .execute(self.get_sqlx_pool())
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to purge deleted files: {}", e)))?
+            .rows_affected();
+        Ok(affected as u64)
+    }
+
+    /// 파일 경로 기준 리비전 상한: 각 (account_hash,file_path,server_group_id)별 최신 max_revisions만 유지하고 나머지는 is_deleted=1 처리
+    async fn trim_old_revisions(&self, max_revisions: i32) -> Result<u64> {
+        // MySQL 5.7 호환: 서브쿼리로 최신 N개를 제외하고 나머지를 is_deleted=1로 마킹
+        // 논리 삭제만 수행 (물리 삭제는 TTL로 정리)
+        let sql = r#"
+            UPDATE files f
+            JOIN (
+                SELECT t.account_hash, t.file_path, t.server_group_id, t.file_id, t.revision
+                FROM files t
+                WHERE t.is_deleted = 0
+                AND (
+                    SELECT COUNT(*) FROM files i
+                    WHERE i.account_hash = t.account_hash
+                      AND i.file_path = t.file_path
+                      AND i.server_group_id = t.server_group_id
+                      AND i.is_deleted = 0
+                      AND i.updated_time >= t.updated_time
+                ) > ?
+            ) AS x
+            ON f.account_hash = x.account_hash
+               AND f.file_path = x.file_path
+               AND f.server_group_id = x.server_group_id
+               AND f.file_id = x.file_id
+               AND f.revision = x.revision
+            SET f.is_deleted = 1
+        "#;
+        let affected = sqlx::query(sql)
+            .bind(max_revisions)
+            .execute(self.get_sqlx_pool())
+            .await
+            .map_err(|e| StorageError::Database(format!("Failed to trim old revisions: {}", e)))?
+            .rows_affected();
+        Ok(affected as u64)
     }
 }

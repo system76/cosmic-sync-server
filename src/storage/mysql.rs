@@ -1171,7 +1171,7 @@ impl Storage for MySqlStorage {
                 server_group_id, server_watcher_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?)"#
         )
-        .bind(file.file_id as i64)
+        .bind(file.file_id)
         .bind(&file.user_id)
         .bind(&file.device_hash)
         .bind(&file.file_path)
@@ -1197,6 +1197,16 @@ impl Storage for MySqlStorage {
         debug!("Getting devices for account: {}", account_hash);
         // 위임하여 단일 구현 유지
         MySqlDeviceExt::list_devices(self, account_hash).await
+    }
+
+    /// Purge logically deleted files older than ttl_secs; return affected rows
+    async fn purge_deleted_files_older_than(&self, ttl_secs: i64) -> Result<u64> {
+        <MySqlStorage as MySqlFileExt>::purge_deleted_files_older_than(self, ttl_secs).await
+    }
+
+    /// Trim older revisions per (account_hash, file_path) beyond max_revisions; return affected rows
+    async fn trim_old_revisions(&self, max_revisions: i32) -> Result<u64> {
+        <MySqlStorage as MySqlFileExt>::trim_old_revisions(self, max_revisions).await
     }
     
     // Stub implementations for missing Storage trait methods

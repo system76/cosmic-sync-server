@@ -281,6 +281,14 @@ impl WatcherHandler {
             watcher_ids: Vec::new(),
         };
         
+        // Optional: validate watcher folder (reject numeric-only segments unless whitelisted)
+        if let Some(watcher_data) = &req.watcher_data {
+            if let Err(msg) = crate::utils::validator::validate_watcher_folder(&watcher_data.folder) {
+                warn!("Invalid watcher folder '{}': {}", watcher_data.folder, msg);
+                return Err(Status::invalid_argument(msg));
+            }
+        }
+
         // Register watcher group in storage first
         let registered_group_id = match self.app_state.storage.register_watcher_group(&account_hash, &device_hash, &group).await {
             Ok(id) => {

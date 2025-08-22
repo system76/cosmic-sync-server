@@ -237,6 +237,17 @@ impl VersionService for VersionServiceImpl {
         // Step 3: Send notification to all devices including the requester
         self.file_service.send_file_restore_notification(&target_file_info).await;
 
+        // Publish version created event for restored revision
+        let routing_key = format!("version.created.{}.{}", request.account_hash, request.file_id);
+        let payload = serde_json::json!({
+            "type": "version_created",
+            "account_hash": request.account_hash,
+            "file_id": request.file_id,
+            "new_revision": new_revision,
+            "timestamp": Utc::now().timestamp(),
+        }).to_string().into_bytes();
+        // Use AppState's EventBus via a global hook is not available; publishing will be handled in SyncHandler on broadcast.
+
         let restored_file_info = self.sync_file_to_file_info(&restored_file);
 
         // If broadcast is requested, notify other devices
@@ -335,6 +346,19 @@ impl VersionService for VersionServiceImpl {
             .map_err(|e| AppError::Storage(format!("Failed to create file version: {}", e)))?;
 
         info!("Created new file version: file_id={}, revision={}", file.file_id, file.revision);
+
+        // Publish version created event via JSON (routing: version.created.{account_hash}.{file_id})
+        let routing_key = format!("version.created.{}.{}", file.user_id, file.file_id);
+        let payload = serde_json::json!({
+            "type": "version_created",
+            "account_hash": file.user_id,
+            "device_hash": file.device_hash,
+            "file_id": file.file_id,
+            "revision": file.revision,
+            "file_path": file.file_path,
+            "timestamp": Utc::now().timestamp(),
+        }).to_string().into_bytes();
+        // Note: EventBus is available from AppState; here we don't have it. VersionService should be invoked by handlers that can publish.
 
         Ok(file.revision)
     }

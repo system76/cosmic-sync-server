@@ -36,6 +36,8 @@ pub type WatcherPresetUpdateSender = mpsc::Sender<std::result::Result<WatcherPre
 pub struct NotificationManager {
     // account_hash:device_hash -> sender 매핑
     file_update_subscribers: Arc<Mutex<HashMap<String, FileUpdateSender>>>,
+    // 구독자 키 -> 클라이언트가 보낸 원본 account_hash(필터 호환용)
+    file_update_alias_accounts: Arc<Mutex<HashMap<String, String>>>,
     // account_hash:device_hash -> sender 매핑
     watcher_group_update_subscribers: Arc<Mutex<HashMap<String, WatcherGroupUpdateSender>>>,
     // account_hash:device_hash -> sender 매핑
@@ -47,6 +49,7 @@ impl NotificationManager {
     pub fn new() -> Self {
         Self {
             file_update_subscribers: Arc::new(Mutex::new(HashMap::new())),
+            file_update_alias_accounts: Arc::new(Mutex::new(HashMap::new())),
             watcher_group_update_subscribers: Arc::new(Mutex::new(HashMap::new())),
             watcher_preset_update_subscribers: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -58,11 +61,23 @@ impl NotificationManager {
         subscribers.insert(key.clone(), sender);
         Ok(())
     }
+
+    /// 파일 업데이트 구독자 등록(클라이언트 원본 account_hash 별칭 포함)
+    pub async fn register_file_update_subscriber_with_alias(&self, key: String, sender: FileUpdateSender, original_account_hash: String) -> Result<()> {
+        let mut subscribers = self.file_update_subscribers.lock().await;
+        subscribers.insert(key.clone(), sender);
+        let mut aliases = self.file_update_alias_accounts.lock().await;
+        aliases.insert(key, original_account_hash);
+        Ok(())
+    }
     
     /// 파일 업데이트 구독자 제거
     pub async fn unregister_file_update_subscriber(&self, key: &str) -> Result<bool> {
         let mut subscribers = self.file_update_subscribers.lock().await;
-        Ok(subscribers.remove(key).is_some())
+        let removed = subscribers.remove(key).is_some();
+        let mut aliases = self.file_update_alias_accounts.lock().await;
+        aliases.remove(key);
+        Ok(removed)
     }
     
     /// 워처 그룹 업데이트 구독자 등록
@@ -108,6 +123,7 @@ impl NotificationManager {
         let account_hash = notification.account_hash.clone();
         
         let subscribers = self.file_update_subscribers.lock().await;
+        let aliases = self.file_update_alias_accounts.lock().await;
         let mut sent_count = 0;
         let mut errors = Vec::new();
         
@@ -123,7 +139,12 @@ impl NotificationManager {
                 };
                 
                 if should_send {
-                    match sender.send(Ok(notification.clone())).await {
+                    // 구독자별 계정 별칭이 있다면 알림의 account_hash를 별칭으로 교체
+                    let mut notif = notification.clone();
+                    if let Some(alias_acc) = aliases.get(device_key) {
+                        notif.account_hash = alias_acc.clone();
+                    }
+                    match sender.send(Ok(notif)).await {
                         Ok(_) => {
                             sent_count += 1;
                         },
@@ -283,5 +304,11 @@ impl NotificationManager {
     /// Get file update subscribers (for internal use)
     pub fn get_file_update_subscribers(&self) -> &Arc<Mutex<HashMap<String, FileUpdateSender>>> {
         &self.file_update_subscribers
+    }
+
+    /// Get alias account_hash for a given file update subscriber key, if any
+    pub async fn get_file_update_alias_account(&self, key: &str) -> Option<String> {
+        let aliases = self.file_update_alias_accounts.lock().await;
+        aliases.get(key).cloned()
     }
 } 

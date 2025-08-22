@@ -50,6 +50,10 @@ pub const HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 90;
 // CORS
 pub const DEFAULT_CORS_MAX_AGE_SECS: u64 = 3600;
 
+// Retention/TTL
+pub const DEFAULT_FILE_TTL_SECS: i64 = 30 * 24 * 3600; // 30 days
+pub const DEFAULT_MAX_FILE_REVISIONS: i32 = 10;
+
 
 
 

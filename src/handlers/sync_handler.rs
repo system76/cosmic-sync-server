@@ -245,9 +245,23 @@ impl SyncHandler {
         }
         
         // Use version service to broadcast file restore
-        match self.app_state.version_service.broadcast_file_restore(req).await {
+        match self.app_state.version_service.broadcast_file_restore(req.clone()).await {
             Ok(response) => {
                 info!("File restore broadcasted for account: {}", auth_result.account_hash);
+                // Publish version restored event
+                let routing_key = format!("version.restored.{}.{}", auth_result.account_hash, req.file_id);
+                let payload = serde_json::json!({
+                    "type": "version_restored",
+                    "id": nanoid::nanoid!(8),
+                    "account_hash": auth_result.account_hash,
+                    "file_id": req.file_id,
+                    "target_revision": req.new_revision,
+                    "source_device_hash": req.source_device_hash,
+                    "timestamp": chrono::Utc::now().timestamp(),
+                }).to_string().into_bytes();
+                if let Err(e) = self.app_state.event_bus.publish(&routing_key, payload).await {
+                    debug!("EventBus publish failed (noop or disconnected): {}", e);
+                }
                 Ok(Response::new(response))
             },
             Err(e) => {

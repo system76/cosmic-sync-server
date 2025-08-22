@@ -1043,4 +1043,12 @@ impl Storage for MemoryStorage {
     async fn delete_encryption_key(&self, _account_hash: &str) -> Result<()> {
         Err(StorageError::NotImplemented("delete_encryption_key not implemented".to_string()))
     }
+
+    async fn purge_deleted_files_older_than(&self, _ttl_secs: i64) -> Result<u64> {
+        Ok(0)
+    }
+
+    async fn trim_old_revisions(&self, _max_revisions: i32) -> Result<u64> {
+        Ok(0)
+    }
 } 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 use crate::storage::{Storage, memory::MemoryStorage, FileStorage};
     use crate::storage::mysql::MySqlStorage;
 use crate::storage::mysql_watcher::MySqlWatcherExt;
@@ -13,6 +13,7 @@ use crate::services::version_service::{VersionService, VersionServiceImpl};
 use crate::error::AppError;
 use crate::server::notification_manager::NotificationManager;
 use crate::server::event_bus::{EventBus, NoopEventBus};
+use crate::server::event_bus::RabbitMqEventBus;
 use std::sync::Mutex;
 use chrono::{Utc, DateTime};
 use tokio::sync::RwLock;
@@ -83,6 +84,23 @@ pub struct AppState {
 }
 
 impl AppState {
+    async fn create_event_bus() -> Arc<dyn EventBus> {
+        let cfg = crate::config::settings::MessageBrokerConfig::load();
+        if cfg.enabled {
+            match RabbitMqEventBus::connect(&cfg.url, &cfg.exchange, &cfg.queue_prefix, cfg.prefetch, cfg.durable).await {
+                Ok(bus) => {
+                    info!("RabbitMQ EventBus connected: exchange={} prefetch={}", cfg.exchange, cfg.prefetch);
+                    Arc::new(bus)
+                }
+                Err(e) => {
+                    error!("RabbitMQ connection failed, using NoopEventBus: {}", e);
+                    Arc::new(NoopEventBus::default())
+                }
+            }
+        } else {
+            Arc::new(NoopEventBus::default())
+        }
+    }
     /// parse MySQL URL and initialize storage
     async fn initialize_storage(url: &str) -> Result<Arc<dyn Storage>, AppError> {
         if url.starts_with("mysql://") {
@@ -126,8 +144,8 @@ impl AppState {
         // initialize encryption service
         let encryption = EncryptionService::new(storage.clone());
 
-        // initialize event bus (injected, noop by default)
-        let event_bus: Arc<dyn EventBus> = Arc::new(NoopEventBus::default());
+        // initialize event bus (RabbitMQ if enabled)
+        let event_bus: Arc<dyn EventBus> = Self::create_event_bus().await;
         
         // initialize file storage (load from settings)
         let file_storage = Self::initialize_file_storage().await?;
@@ -207,6 +225,7 @@ impl AppState {
             logging: crate::config::settings::LoggingConfig::default(),
             features: crate::config::settings::FeatureFlags::default(),
             storage: crate::config::settings::StorageConfig::default(),
+            message_broker: crate::config::settings::MessageBrokerConfig::load(),
         };
 
         // initialize notification manager
@@ -236,8 +255,8 @@ impl AppState {
         // initialize version service
         let version_service = VersionServiceImpl::new(storage.clone(), file.clone());
 
-        // initialize event bus (noop by default)
-        let event_bus: Arc<dyn EventBus> = Arc::new(NoopEventBus::default());
+        // initialize event bus (RabbitMQ if enabled)
+        let event_bus: Arc<dyn EventBus> = Self::create_event_bus().await;
 
         Ok(Self {
             config: full_config,
@@ -287,6 +306,7 @@ impl AppState {
             logging: crate::config::settings::LoggingConfig::default(),
             features: crate::config::settings::FeatureFlags::default(),
             storage: crate::config::settings::StorageConfig::default(),
+            message_broker: crate::config::settings::MessageBrokerConfig::load(),
         };
         
         let (storage, notification_manager, event_bus, oauth, encryption, file, device, version_service) = 
@@ -339,6 +359,11 @@ impl AppState {
     ) -> Result<i32, crate::storage::StorageError> {
         info!("Creating or getting watcher for account={}, group_id={}, folder={}", 
               account_hash, group_id, &watcher_data.folder);
+
+        // Validate watcher folder (numeric-only segment guard with whitelist/regex exceptions)
+        if let Err(msg) = crate::utils::validator::validate_watcher_folder(&watcher_data.folder) {
+            return Err(crate::storage::StorageError::ValidationError(msg));
+        }
         
         // check if watcher already exists for this folder
         let existing_watcher = self.storage.find_watcher_by_folder(account_hash, group_id, &watcher_data.folder).await?;
@@ -405,7 +430,16 @@ impl AppState {
         }
         // Publish to cross-instance bus (noop by default)
         let routing_key = format!("watcher.group.update.{}", account_hash);
-        if let Err(e) = self.event_bus.publish(&routing_key, Vec::new()).await {
+        let payload = serde_json::json!({
+            "type": "watcher_group_update",
+            "id": nanoid::nanoid!(8),
+            "account_hash": account_hash,
+            "device_hash": device_hash,
+            "timestamp": chrono::Utc::now().timestamp(),
+        })
+        .to_string()
+        .into_bytes();
+        if let Err(e) = self.event_bus.publish(&routing_key, payload).await {
             debug!("EventBus publish failed (noop or disconnected): {}", e);
         }
         
@@ -441,7 +475,16 @@ impl AppState {
         }
         // Publish to cross-instance bus (noop by default)
         let routing_key = format!("watcher.preset.update.{}", account_hash);
-        if let Err(e) = self.event_bus.publish(&routing_key, Vec::new()).await {
+        let payload = serde_json::json!({
+            "type": "watcher_preset_update",
+            "id": nanoid::nanoid!(8),
+            "account_hash": account_hash,
+            "device_hash": device_hash,
+            "timestamp": chrono::Utc::now().timestamp(),
+        })
+        .to_string()
+        .into_bytes();
+        if let Err(e) = self.event_bus.publish(&routing_key, payload).await {
             debug!("EventBus publish failed (noop or disconnected): {}", e);
         }
         
@@ -473,6 +516,26 @@ impl AppState {
             }
         });
     }
+
+	/// Start background cleanup task for file retention (TTL and revision trimming)
+	pub fn start_retention_cleanup_task(&self) {
+		let storage = self.storage.clone();
+		let file_ttl_secs = self.config.storage.file_ttl_secs;
+		let max_revisions = self.config.storage.max_file_revisions;
+		tokio::spawn(async move {
+			let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // hourly
+			loop {
+				interval.tick().await;
+				debug!("Running retention cleanup: ttl_secs={}, max_revisions={}", file_ttl_secs, max_revisions);
+				if let Err(e) = storage.trim_old_revisions(max_revisions).await {
+					warn!("trim_old_revisions failed: {}", e);
+				}
+				if let Err(e) = storage.purge_deleted_files_older_than(file_ttl_secs).await {
+					warn!("purge_deleted_files_older_than failed: {}", e);
+				}
+			}
+		});
+	}
 }
 
 /// Client store for tracking connected clients

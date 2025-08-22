@@ -559,7 +559,7 @@ impl FileStorage for S3FileStorage {
     }
     
     // Stub implementations for missing methods
-    async fn store_file_data_with_options(&self, file_id: u64, data: Vec<u8>, compress: bool) -> Result<String> {
+    async fn store_file_data_with_options(&self, file_id: u64, data: Vec<u8>, _compress: bool) -> Result<String> {
         // For now, ignore compression option and use existing method
         self.store_file_data(file_id, data).await
     }

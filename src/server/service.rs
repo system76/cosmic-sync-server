@@ -136,101 +136,120 @@ impl SyncServiceImpl {
     }
     
     /// 새로 구독한 클라이언트에게 기존 파일들에 대한 초기 동기화 알림 전송 (개선된 버전)
-    async fn send_initial_file_sync(&self, account_hash: &str, device_hash: &str) -> Result<(), Status> {
-        info!("🔄 Starting enhanced initial file sync for device: {}:{}", account_hash, device_hash);
-        
+    async fn send_initial_file_sync(&self, account_hash: &str, device_hash: &str, since_ts: Option<i64>) -> Result<(), Status> {
+        info!("Starting initial file sync for device: {}:{} since_ts={:?}", account_hash, device_hash, since_ts);
         // 연결 상태 업데이트
         let connection_key = format!("{}:{}", account_hash, device_hash);
         self.app_state.connection_tracker.update_sync_time(&connection_key).await;
-        
-        // 해당 계정의 모든 활성 파일 조회
-                        let files = match self.app_state.storage.list_files(account_hash, 1, None).await {
-            Ok(files) => files,
+
+        // 디바이스 저장된 last_sync 조회 (없으면 0)
+        let stored_last_sync = match self.app_state.storage.get_device(account_hash, device_hash).await {
+            Ok(Some(dev)) => dev.last_sync.timestamp(),
+            Ok(None) => 0,
             Err(e) => {
-                error!("Failed to list files for initial sync: {}", e);
-                return Err(Status::internal("Failed to retrieve files for initial sync"));
+                warn!("Failed to get device for initial sync watermark: {}", e);
+                0
             }
         };
-        
-        let mut sync_count = 0;
-        let mut skip_count = 0;
+        let effective_since = since_ts.unwrap_or(0).max(stored_last_sync);
+
+        // 해당 계정의 모든 활성 파일 조회 (모든 서버 그룹을 합산)
+        let groups = match self.app_state.storage.get_watcher_groups(account_hash).await {
+            Ok(gs) => gs,
+            Err(e) => {
+                error!("Failed to get watcher groups for initial sync: {}", e);
+                return Err(Status::internal("Failed to retrieve watcher groups for initial sync"));
+            }
+        };
+
+        let mut files = Vec::new();
+        for group in groups.into_iter() {
+            match self.app_state.storage.list_files(account_hash, group.id, Some(effective_since)).await {
+                Ok(mut fs) => files.append(&mut fs),
+                Err(e) => {
+                    warn!("Failed to list files for initial sync (group_id={}): {}", group.id, e);
+                }
+            }
+        }
+
+        let mut sync_count = 0usize;
+        let mut skip_count = 0usize;
         let subscriber_key = format!("{}:{}", account_hash, device_hash);
-        
-        // 배치 크기 설정 (한 번에 너무 많은 알림을 보내지 않도록)
+
+        // 배치 크기 설정
         const BATCH_SIZE: usize = 50;
         let total_files = files.len();
-        
-        // 각 파일에 대해 배치 처리로 개별 알림 전송
+        let mut max_delivered_ts: i64 = effective_since;
+
         for (batch_idx, batch) in files.chunks(BATCH_SIZE).enumerate() {
-            debug!("📦 Processing batch {}/{} ({} files)", 
-                   batch_idx + 1, (total_files + BATCH_SIZE - 1) / BATCH_SIZE, batch.len());
-            
+            debug!("Processing batch {}/{} ({} files)", batch_idx + 1, (total_files + BATCH_SIZE - 1) / BATCH_SIZE, batch.len());
             for file in batch {
-                                        // Skip files that are logically deleted (check by status or other field if available)
-                        // Note: is_deleted field not available in current FileInfo struct
-                
-                // 같은 장치에서 업로드된 파일은 제외 (클라이언트가 이미 가지고 있음)
+                // 같은 장치에서 업로드된 파일은 제외
                 if file.device_hash == device_hash {
                     skip_count += 1;
-                    debug!("⏭️ Skipping file {} (same device: {})", file.filename, device_hash);
+                    debug!("Skipping file {} (same device: {})", file.filename, device_hash);
                     continue;
                 }
-                
-                                        // 파일 업데이트 알림 생성
-                        let file_info = crate::sync::FileInfo {
-                            file_id: file.file_id as u64,
-                            filename: file.filename.clone(),
-                            file_hash: file.file_hash.clone(),
-                            device_hash: file.device_hash.clone(),
-                            group_id: file.group_id,
-                            watcher_id: file.watcher_id,
-                            file_path: file.file_path.clone(),
-                            file_size: file.size as u64,
-                            revision: file.revision,
-                            is_encrypted: file.is_encrypted,
-                            updated_time: Some(prost_types::Timestamp {
-                                seconds: file.updated_time.seconds,
-                                nanos: file.updated_time.nanos,
-                            }),
-                        };
-                        
-                        let file_update_notification = crate::sync::FileUpdateNotification {
-                            account_hash: account_hash.to_string(),
-                            device_hash: file.device_hash.clone(),
-                            file_info: Some(file_info),
-                            update_type: crate::sync::file_update_notification::UpdateType::Uploaded as i32,
-                            timestamp: file.updated_time.seconds,
-                        };
-                
-                                        // 특정 구독자에게만 전송 (새로 연결된 클라이언트)
-                        if let Some(sender) = {
-                            let subscribers = self.app_state.notification_manager.get_file_update_subscribers().lock().await;
-                            subscribers.get(&subscriber_key).cloned()
-                        } {
+
+                let file_info = crate::sync::FileInfo {
+                    file_id: file.file_id as u64,
+                    filename: file.filename.clone(),
+                    file_hash: file.file_hash.clone(),
+                    device_hash: file.device_hash.clone(),
+                    group_id: file.group_id,
+                    watcher_id: file.watcher_id,
+                    file_path: file.file_path.clone(),
+                    file_size: file.size as u64,
+                    revision: file.revision,
+                    is_encrypted: file.is_encrypted,
+                    updated_time: Some(prost_types::Timestamp { seconds: file.updated_time.seconds, nanos: file.updated_time.nanos }),
+                };
+
+                let mut file_update_notification = crate::sync::FileUpdateNotification {
+                    account_hash: account_hash.to_string(),
+                    device_hash: file.device_hash.clone(),
+                    file_info: Some(file_info),
+                    update_type: crate::sync::file_update_notification::UpdateType::Uploaded as i32,
+                    timestamp: file.updated_time.seconds,
+                };
+                if let Some(alias_acc) = self.app_state.notification_manager.get_file_update_alias_account(&subscriber_key).await {
+                    file_update_notification.account_hash = alias_acc;
+                }
+
+                if let Some(sender) = { let subscribers = self.app_state.notification_manager.get_file_update_subscribers().lock().await; subscribers.get(&subscriber_key).cloned() } {
                     match sender.send(Ok(file_update_notification)).await {
                         Ok(_) => {
                             sync_count += 1;
-                            debug!("📤 Initial sync notification sent for file: {} ({})", file.filename, file.file_id);
+                            if file.updated_time.seconds > max_delivered_ts { max_delivered_ts = file.updated_time.seconds; }
+                            debug!("Initial sync notification sent for file: {} ({})", file.filename, file.file_id);
                         },
                         Err(e) => {
                             warn!("Failed to send initial sync notification for file {}: {}", file.filename, e);
-                            break; // 전송 실패 시 이 배치 중단
+                            break;
                         }
                     }
                 } else {
                     warn!("Subscriber {} not found during initial sync", subscriber_key);
-                    break; // 구독자가 없으면 중단
+                    break;
                 }
             }
-            
-            // 배치 간 짧은 지연 (채널이 막히는 것을 방지)
             if batch_idx + 1 < (total_files + BATCH_SIZE - 1) / BATCH_SIZE {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
         }
-        
-        info!("🎉 Enhanced initial file sync completed: {} files synced, {} skipped, total processed: {} for {}:{}", 
-              sync_count, skip_count, total_files, account_hash, device_hash);
+
+        // 초기 동기화 완료 시 디바이스 last_sync 갱신
+        if max_delivered_ts > stored_last_sync {
+            if let Ok(Some(mut dev)) = self.app_state.storage.get_device(account_hash, device_hash).await {
+                dev.last_sync = chrono::Utc::now();
+                // updated_at은 update_device 내에서 now로 세팅됨
+                if let Err(e) = self.app_state.storage.update_device(&dev).await {
+                    warn!("Failed to update device last_sync after initial sync: {}", e);
+                }
+            }
+        }
+
+        info!("Initial file sync completed: {} files synced, {} skipped, total processed: {} for {}:{}", sync_count, skip_count, total_files, account_hash, device_hash);
         Ok(())
     }
 }
@@ -589,9 +608,10 @@ impl SyncService for SyncServiceImpl {
         let connection_key = self.app_state.connection_tracker
             .register_connection(device_hash.clone(), account_hash.clone()).await;
         
-        match self.app_state.notification_manager.register_file_update_subscriber(
+        match self.app_state.notification_manager.register_file_update_subscriber_with_alias(
             subscriber_key.clone(), 
-            tx
+            tx,
+            req.account_hash.clone(),
         ).await {
             Ok(_) => {
                 // 구독 해제를 처리하기 위한 백그라운드 작업
@@ -618,7 +638,8 @@ impl SyncService for SyncServiceImpl {
                 // 현재는 초기 동기화로 대체
                 
                 // 초기 동기화: 기존 파일들에 대한 알림 전송
-                if let Err(e) = self.send_initial_file_sync(&account_hash, &device_hash).await {
+                let since_ts = if req.since_ts > 0 { Some(req.since_ts) } else { None };
+                if let Err(e) = self.send_initial_file_sync(&account_hash, &device_hash, since_ts).await {
                     warn!("Failed to send initial file sync to {}:{}: {}", account_hash, device_hash, e);
                 }
                 

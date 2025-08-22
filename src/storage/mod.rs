@@ -351,6 +351,12 @@ pub trait Storage: Sync + Send {
     
     /// Get all devices for an account (for broadcasting)
     async fn get_devices_for_account(&self, account_hash: &str) -> Result<Vec<Device>>;
+
+    // Retention cleanup
+    /// Purge logically deleted files older than ttl_secs; return affected rows
+    async fn purge_deleted_files_older_than(&self, ttl_secs: i64) -> Result<u64>;
+    /// Trim older revisions per (account_hash, file_path) beyond max_revisions; return affected rows
+    async fn trim_old_revisions(&self, max_revisions: i32) -> Result<u64>;
 }
 
 /// Optimized storage factory with connection pooling

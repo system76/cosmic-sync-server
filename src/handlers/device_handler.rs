@@ -93,6 +93,22 @@ impl DeviceHandler {
                 match self.app_state.device.register_device(&device).await {
                     Ok(_) => {
                         info!("✅ device registration/update successful: account_hash={}, device_hash={}", server_account_hash, req.device_hash);
+
+                        // Publish device registered/updated event
+                        let routing_key = format!("device.registered.{}", server_account_hash);
+                        let payload = serde_json::json!({
+                            "type": "device_registered",
+                            "id": nanoid::nanoid!(8),
+                            "account_hash": server_account_hash,
+                            "device_hash": device.device_hash,
+                            "os_version": device.os_version,
+                            "app_version": device.app_version,
+                            "is_active": device.is_active,
+                            "timestamp": Utc::now().timestamp(),
+                        }).to_string().into_bytes();
+                        if let Err(e) = self.app_state.event_bus.publish(&routing_key, payload).await {
+                            debug!("EventBus publish failed (noop or disconnected): {}", e);
+                        }
                         let response = RegisterDeviceResponse {
                             success: true,
                             device_hash: device.device_hash.clone(),
@@ -161,6 +177,22 @@ impl DeviceHandler {
                 match self.app_state.device.update_device(&device).await {
                     Ok(()) => {
                         info!("device info updated successfully: {}", req.device_hash);
+
+                        // Publish device updated event
+                        let routing_key = format!("device.updated.{}", req.account_hash);
+                        let payload = serde_json::json!({
+                            "type": "device_updated",
+                            "id": nanoid::nanoid!(8),
+                            "account_hash": req.account_hash,
+                            "device_hash": device.device_hash,
+                            "os_version": device.os_version,
+                            "app_version": device.app_version,
+                            "is_active": device.is_active,
+                            "timestamp": Utc::now().timestamp(),
+                        }).to_string().into_bytes();
+                        if let Err(e) = self.app_state.event_bus.publish(&routing_key, payload).await {
+                            debug!("EventBus publish failed (noop or disconnected): {}", e);
+                        }
                         Ok(Response::new(UpdateDeviceInfoResponse {
                             success: true,
                             return_message: "device info updated successfully".to_string(),
@@ -192,6 +224,22 @@ impl DeviceHandler {
                 match self.app_state.device.register_device(&new_device).await {
                     Ok(()) => {
                         info!("new device registered successfully: {}", req.device_hash);
+
+                        // Publish device registered event
+                        let routing_key = format!("device.registered.{}", req.account_hash);
+                        let payload = serde_json::json!({
+                            "type": "device_registered",
+                            "id": nanoid::nanoid!(8),
+                            "account_hash": req.account_hash,
+                            "device_hash": new_device.device_hash,
+                            "os_version": new_device.os_version,
+                            "app_version": new_device.app_version,
+                            "is_active": new_device.is_active,
+                            "timestamp": Utc::now().timestamp(),
+                        }).to_string().into_bytes();
+                        if let Err(e) = self.app_state.event_bus.publish(&routing_key, payload).await {
+                            debug!("EventBus publish failed (noop or disconnected): {}", e);
+                        }
                         Ok(Response::new(UpdateDeviceInfoResponse {
                             success: true,
                             return_message: "new device registered successfully".to_string(),
