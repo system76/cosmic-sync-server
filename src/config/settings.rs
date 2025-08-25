@@ -18,6 +18,9 @@ pub struct Config {
     pub features: FeatureFlags,
     /// Message broker (RabbitMQ) configuration
     pub message_broker: MessageBrokerConfig,
+    /// Server-side encoding key (hex) for path/filename encryption (optional)
+    #[serde(skip)]
+    pub server_encode_key: Option<Vec<u8>>,
 }
 
 impl Default for Config {
@@ -29,6 +32,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             features: FeatureFlags::default(),
             message_broker: MessageBrokerConfig::default(),
+            server_encode_key: None,
         }
     }
 }
@@ -43,6 +47,7 @@ impl Config {
             logging: LoggingConfig::load(),
             features: FeatureFlags::load(),
             message_broker: MessageBrokerConfig::load(),
+            server_encode_key: None,
         }
     }
     
@@ -282,6 +287,8 @@ pub struct FeatureFlags {
     pub storage_encryption: bool,
     /// Enable request validation for improved security
     pub request_validation: bool,
+    /// Encrypt metadata (path/name) on transport to clients
+    pub transport_encrypt_metadata: bool,
 }
 
 impl Default for FeatureFlags {
@@ -292,6 +299,7 @@ impl Default for FeatureFlags {
             metrics_enabled: false,
             storage_encryption: true,
             request_validation: true,
+            transport_encrypt_metadata: true,
         }
     }
 }
@@ -314,6 +322,9 @@ impl FeatureFlags {
         let request_validation = env::var("REQUEST_VALIDATION")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(true);
+        let transport_encrypt_metadata = env::var("COSMIC_TRANSPORT_ENCRYPT_METADATA")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(true);
             
         Self {
             test_mode,
@@ -321,6 +332,7 @@ impl FeatureFlags {
             metrics_enabled,
             storage_encryption,
             request_validation,
+            transport_encrypt_metadata,
         }
     }
 } 

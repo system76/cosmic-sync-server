@@ -202,6 +202,38 @@ impl ConfigLoader {
         }
     }
 
+    /// Get encryption/server encode key (for path/filename encryption)
+    pub async fn get_server_encode_key(&self) -> Option<Vec<u8>> {
+        // local env first
+        if let Ok(v) = env::var("SERVER_ENCODE_KEY") {
+            if let Ok(bytes) = hex::decode(v) { return Some(bytes); }
+        }
+        // cloud: use Secrets Manager key "server_encode_key"
+        if self.environment.is_cloud() {
+            if let Some(secret_name) = self.get_secret_name() {
+                if let Some(value) = self.get_from_secrets_manager_key_value(&secret_name, "server_encode_key").await { return value; }
+            }
+        }
+        None
+    }
+
+    async fn get_from_secrets_manager_key_value(&self, secret_name: &str, key: &str) -> Option<Option<Vec<u8>>> {
+        let client = self.secrets_client.as_ref()?;
+        match client.get_secret_value().secret_id(secret_name).send().await {
+            Ok(result) => {
+                if let Some(secret_string) = result.secret_string() {
+                    if let Ok(map) = serde_json::from_str::<HashMap<String, Value>>(secret_string) {
+                        if let Some(Value::String(s)) = map.get(key) {
+                            return Some(hex::decode(s).ok());
+                        }
+                    }
+                }
+                Some(None)
+            }
+            Err(_) => None,
+        }
+    }
+
     /// Get database configuration from secrets or environment
     pub async fn get_database_config(&self) -> super::settings::DatabaseConfig {
         use super::settings::DatabaseConfig;
@@ -432,6 +464,9 @@ impl ConfigLoader {
         let request_validation = self.get_config_value("REQUEST_VALIDATION", Some("true")).await
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(true);
+        let transport_encrypt_metadata = self.get_config_value("COSMIC_TRANSPORT_ENCRYPT_METADATA", Some("true")).await
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(true);
 
         FeatureFlags {
             test_mode,
@@ -439,6 +474,7 @@ impl ConfigLoader {
             metrics_enabled,
             storage_encryption,
             request_validation,
+            transport_encrypt_metadata,
         }
     }
 
@@ -452,6 +488,7 @@ impl ConfigLoader {
         let logging = self.get_logging_config().await;
         let features = self.get_feature_flags().await;
         let message_broker = super::settings::MessageBrokerConfig::load();
+        let server_encode_key = self.get_server_encode_key().await;
 
         info!("Configuration loaded successfully");
 
@@ -462,6 +499,7 @@ impl ConfigLoader {
             logging,
             features,
             message_broker,
+            server_encode_key,
         }
     }
 } 

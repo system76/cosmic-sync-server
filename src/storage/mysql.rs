@@ -88,10 +88,17 @@ impl MySqlStorage {
                 .await
                 .map_err(|e| StorageError::Database(format!("Failed to insert watcher_group: {}", e)))?;
 
-            sqlx::query_scalar("SELECT LAST_INSERT_ID()")
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?
+            // last inserted id
+            // Note: previous execute succeeded, so fetch from last result using ROW_COUNT() pattern is not available here; we re-run an id fetch
+            // Instead, insert returns last_insert_id on mysql; use a separate insert capture
+            {
+                // re-insert is not desired; instead query last_insert_id via scalar u64 and cast
+                let id_u64: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?;
+                if id_u64 > i32::MAX as u64 { i32::MAX } else { id_u64 as i32 }
+            }
         };
 
         if server_group_id == 0 {
@@ -148,10 +155,17 @@ impl MySqlStorage {
                 .await
                 .map_err(|e| StorageError::Database(format!("Failed to insert watcher: {}", e)))?;
 
-            sqlx::query_scalar("SELECT LAST_INSERT_ID()")
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?
+            // last inserted id
+            // Note: previous execute succeeded, so fetch from last result using ROW_COUNT() pattern is not available here; we re-run an id fetch
+            // Instead, insert returns last_insert_id on mysql; use a separate insert capture
+            {
+                // re-insert is not desired; instead query last_insert_id via scalar u64 and cast
+                let id_u64: u64 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|e| StorageError::Database(format!("Failed to get last insert id: {}", e)))?;
+                if id_u64 > i32::MAX as u64 { i32::MAX } else { id_u64 as i32 }
+            }
         };
 
         if server_watcher_id == 0 {
@@ -259,8 +273,8 @@ impl MySqlStorage {
             file_id BIGINT UNSIGNED NOT NULL,
             account_hash VARCHAR(255) NOT NULL,
             device_hash VARCHAR(255) NOT NULL,
-            file_path VARCHAR(1024) NOT NULL,
-            filename VARCHAR(255) NOT NULL,
+            file_path VARBINARY(2048) NOT NULL,
+            filename VARBINARY(512) NOT NULL,
             file_hash VARCHAR(255) NOT NULL,
             size BIGINT NOT NULL DEFAULT 0,
             is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
@@ -270,10 +284,16 @@ impl MySqlStorage {
             upload_time BIGINT NOT NULL,
             group_id INT NOT NULL DEFAULT 0,
             watcher_id INT NOT NULL DEFAULT 0,
+            server_group_id INT NOT NULL DEFAULT 0,
+            server_watcher_id INT NOT NULL DEFAULT 0,
+            eq_index VARBINARY(32) NOT NULL,
+            token_path VARCHAR(4096) NOT NULL,
             INDEX (account_hash),
             INDEX (file_id),
             INDEX (file_hash),
             INDEX (account_hash, group_id),
+            INDEX (eq_index),
+            INDEX (token_path),
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
         )";
         
@@ -378,6 +398,92 @@ impl MySqlStorage {
             
             info!("files 테이블에 operation_type 컬럼 추가 완료");
         }
+
+        // files 테이블에 eq_index/token_path/server_group_id/server_watcher_id 컬럼 추가, 경로 컬럼 형식 변경
+        let has_eq_index: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'eq_index'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("eq_index 컬럼 존재 여부 확인 실패: {}", e); StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) })?;
+        if !has_eq_index {
+            info!("files 테이블에 eq_index 컬럼 추가");
+            sqlx::query(r#"ALTER TABLE files ADD COLUMN eq_index VARBINARY(32) NULL"#)
+                .execute(self.get_sqlx_pool()).await
+                .map_err(|e| { error!("eq_index 컬럼 추가 실패: {}", e); StorageError::Database(format!("eq_index 컬럼 추가 실패: {}", e)) })?;
+            // 인덱스 확인 후 생성
+            let has_eq_index_idx: bool = sqlx::query_scalar(
+                r#"SELECT COUNT(*) > 0 FROM information_schema.statistics 
+                   WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'eq_index'"#
+            ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("eq_index 인덱스 확인 실패: {}", e)))?;
+            if !has_eq_index_idx {
+                sqlx::query(r#"CREATE INDEX idx_files_eq_index ON files(eq_index)"#)
+                    .execute(self.get_sqlx_pool()).await
+                    .map_err(|e| StorageError::Database(format!("eq_index 인덱스 생성 실패: {}", e)))?;
+            }
+        }
+
+        let has_token_path: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'token_path'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("token_path 컬럼 존재 여부 확인 실패: {}", e); StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) })?;
+        if !has_token_path {
+            info!("files 테이블에 token_path 컬럼 추가");
+            sqlx::query(r#"ALTER TABLE files ADD COLUMN token_path VARCHAR(4096) NULL"#)
+                .execute(self.get_sqlx_pool()).await
+                .map_err(|e| { error!("token_path 컬럼 추가 실패: {}", e); StorageError::Database(format!("token_path 컬럼 추가 실패: {}", e)) })?;
+            let has_token_idx: bool = sqlx::query_scalar(
+                r#"SELECT COUNT(*) > 0 FROM information_schema.statistics 
+                   WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'token_path'"#
+            ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("token_path 인덱스 확인 실패: {}", e)))?;
+            if !has_token_idx {
+                sqlx::query(r#"CREATE INDEX idx_files_token_path ON files(token_path)"#)
+                    .execute(self.get_sqlx_pool()).await
+                    .map_err(|e| StorageError::Database(format!("token_path 인덱스 생성 실패: {}", e)))?;
+            }
+        }
+
+        let has_server_group_id: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'server_group_id'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("server_group_id 컬럼 존재 여부 확인 실패: {}", e)))?;
+        if !has_server_group_id {
+            info!("files 테이블에 server_group_id 컬럼 추가");
+            sqlx::query(r#"ALTER TABLE files ADD COLUMN server_group_id INT NOT NULL DEFAULT 0"#)
+                .execute(self.get_sqlx_pool()).await
+                .map_err(|e| StorageError::Database(format!("server_group_id 컬럼 추가 실패: {}", e)))?;
+        }
+
+        let has_server_watcher_id: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'server_watcher_id'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("server_watcher_id 컬럼 존재 여부 확인 실패: {}", e)))?;
+        if !has_server_watcher_id {
+            info!("files 테이블에 server_watcher_id 컬럼 추가");
+            sqlx::query(r#"ALTER TABLE files ADD COLUMN server_watcher_id INT NOT NULL DEFAULT 0"#)
+                .execute(self.get_sqlx_pool()).await
+                .map_err(|e| StorageError::Database(format!("server_watcher_id 컬럼 추가 실패: {}", e)))?;
+        }
+
+        // file_path/filename 컬럼 형식 수정 (VARBINARY)
+        let path_is_varbinary: bool = sqlx::query_scalar(
+            r#"SELECT DATA_TYPE = 'varbinary' FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'file_path'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if !path_is_varbinary {
+            info!("files.file_path 컬럼을 VARBINARY(2048)로 변경");
+            sqlx::query(r#"ALTER TABLE files MODIFY COLUMN file_path VARBINARY(2048) NOT NULL"#)
+                .execute(self.get_sqlx_pool()).await
+                .map_err(|e| StorageError::Database(format!("file_path 컬럼 형식 변경 실패: {}", e)))?;
+        }
+        let name_is_varbinary: bool = sqlx::query_scalar(
+            r#"SELECT DATA_TYPE = 'varbinary' FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'filename'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if !name_is_varbinary {
+            info!("files.filename 컬럼을 VARBINARY(512)로 변경");
+            sqlx::query(r#"ALTER TABLE files MODIFY COLUMN filename VARBINARY(512) NOT NULL"#)
+                .execute(self.get_sqlx_pool()).await
+                .map_err(|e| StorageError::Database(format!("filename 컬럼 형식 변경 실패: {}", e)))?;
+        }
         
         // watcher_conditions 테이블 존재 여부 확인
         let has_watcher_conditions_table: bool = sqlx::query_scalar(
@@ -459,6 +565,65 @@ impl MySqlStorage {
             }
         }
         
+        // watcher_groups 테이블 생성 여부 확인 및 생성
+        let has_watcher_groups_table: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 
+               FROM information_schema.tables 
+               WHERE table_schema = DATABASE() 
+                 AND table_name = 'watcher_groups'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("watcher_groups 테이블 존재 여부 확인 실패: {}", e); StorageError::Database(format!("테이블 존재 여부 확인 실패: {}", e)) })?;
+        if !has_watcher_groups_table {
+            info!("watcher_groups 테이블 생성");
+            let ddl = r#"
+            CREATE TABLE watcher_groups (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                account_hash VARCHAR(255) NOT NULL,
+                group_id INT NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                UNIQUE KEY uniq_account_group (account_hash, group_id),
+                INDEX (account_hash),
+                FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
+            )"#;
+            sqlx::query(ddl).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("watcher_groups 테이블 생성 실패: {}", e); StorageError::Database(format!("watcher_groups 테이블 생성 실패: {}", e)) })?;
+            info!("watcher_groups 테이블 생성 완료");
+        }
+
+        // watchers 테이블 생성 여부 확인 및 생성
+        let has_watchers_table: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 
+               FROM information_schema.tables 
+               WHERE table_schema = DATABASE() 
+                 AND table_name = 'watchers'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { error!("watchers 테이블 존재 여부 확인 실패: {}", e); StorageError::Database(format!("테이블 존재 여부 확인 실패: {}", e)) })?;
+        if !has_watchers_table {
+            info!("watchers 테이블 생성");
+            let ddl = r#"
+            CREATE TABLE watchers (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                watcher_id INT NOT NULL DEFAULT 0,
+                account_hash VARCHAR(255) NOT NULL,
+                group_id INT NOT NULL,
+                local_group_id INT NOT NULL,
+                folder VARCHAR(2048) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                is_recursive BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                extra_json TEXT NOT NULL,
+                INDEX (account_hash),
+                INDEX (group_id),
+                INDEX (account_hash, local_group_id, watcher_id),
+                FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE,
+                FOREIGN KEY (group_id) REFERENCES watcher_groups(id) ON DELETE CASCADE
+            )"#;
+            sqlx::query(ddl).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("watchers 테이블 생성 실패: {}", e); StorageError::Database(format!("watchers 테이블 생성 실패: {}", e)) })?;
+            info!("watchers 테이블 생성 완료");
+        }
+
         // watchers 테이블에 watcher_id 컬럼 존재 여부 확인
         let has_watcher_id_in_watchers: bool = sqlx::query_scalar(
             r#"SELECT COUNT(*) > 0 
@@ -482,6 +647,113 @@ impl MySqlStorage {
             ).execute(self.get_sqlx_pool()).await.map_err(|e| { error!("watcher_id 기본값 설정 실패: {}", e); StorageError::Database(format!("watcher_id 기본값 설정 실패: {}", e)) })?;
             
             info!("watchers 테이블에 watcher_id 컬럼 추가 완료");
+        }
+        
+        // watchers 테이블의 기타 필요 컬럼 보강(local_group_id, is_recursive, extra_json, title, folder, timestamps, flags, indexes)
+        let need_local_group_id: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'local_group_id'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_local_group_id {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN local_group_id INT NOT NULL DEFAULT 0 AFTER group_id"#)
+                .execute(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("local_group_id 추가 실패: {}", e)))?;
+            sqlx::query(r#"CREATE INDEX idx_watchers_account_local_wid ON watchers(account_hash, local_group_id, watcher_id)"#)
+                .execute(self.get_sqlx_pool()).await.ok();
+        }
+        let need_is_recursive: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'is_recursive'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_is_recursive {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN is_recursive BOOLEAN NOT NULL DEFAULT TRUE"#)
+                .execute(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("is_recursive 추가 실패: {}", e)))?;
+        }
+        let need_extra_json: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'extra_json'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_extra_json {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN extra_json TEXT NOT NULL DEFAULT ''"#)
+                .execute(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("extra_json 추가 실패: {}", e)))?;
+        }
+        let need_title: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'title'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_title {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN title VARCHAR(255) NOT NULL DEFAULT 'Watcher' AFTER folder"#)
+                .execute(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("title 추가 실패: {}", e)))?;
+        }
+        let need_folder: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'folder'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_folder {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN folder VARCHAR(2048) NOT NULL DEFAULT '' AFTER local_group_id"#)
+                .execute(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("folder 추가 실패: {}", e)))?;
+        }
+        let need_created: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'created_at'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_created {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0"#)
+                .execute(self.get_sqlx_pool()).await.ok();
+        }
+        let need_updated: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'updated_at'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_updated {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0"#)
+                .execute(self.get_sqlx_pool()).await.ok();
+        }
+        let need_is_active: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) = 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' AND column_name = 'is_active'"#
+        ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+        if need_is_active {
+            sqlx::query(r#"ALTER TABLE watchers ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"#)
+                .execute(self.get_sqlx_pool()).await.ok();
+        }
+
+        // watcher_presets 테이블 생성 여부 확인 및 생성/보강
+        let has_watcher_presets: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 FROM information_schema.tables 
+               WHERE table_schema = DATABASE() AND table_name = 'watcher_presets'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("watcher_presets 테이블 확인 실패: {}", e)))?;
+        if !has_watcher_presets {
+            info!("watcher_presets 테이블 생성");
+            let ddl = r#"
+            CREATE TABLE watcher_presets (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                account_hash VARCHAR(255) NOT NULL UNIQUE,
+                preset_json TEXT NOT NULL,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
+            )"#;
+            sqlx::query(ddl).execute(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("watcher_presets 테이블 생성 실패: {}", e)))?;
+            info!("watcher_presets 테이블 생성 완료");
+        } else {
+            // preset_json 컬럼/인덱스 보강
+            let has_preset_json: bool = sqlx::query_scalar(
+                r#"SELECT COUNT(*) > 0 FROM information_schema.columns 
+                   WHERE table_schema = DATABASE() AND table_name = 'watcher_presets' AND column_name = 'preset_json'"#
+            ).fetch_one(self.get_sqlx_pool()).await.unwrap_or(false);
+            if !has_preset_json {
+                sqlx::query(r#"ALTER TABLE watcher_presets ADD COLUMN preset_json TEXT NOT NULL"#)
+                    .execute(self.get_sqlx_pool()).await.ok();
+            }
+            // account_hash Unique 보장
+            let has_unique: Option<String> = sqlx::query_scalar(
+                r#"SELECT INDEX_NAME FROM information_schema.statistics 
+                   WHERE table_schema = DATABASE() AND table_name = 'watcher_presets' AND NON_UNIQUE = 0 AND COLUMN_NAME = 'account_hash' LIMIT 1"#
+            ).fetch_optional(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("watcher_presets 인덱스 확인 실패: {}", e)))?;
+            if has_unique.is_none() {
+                let _ = sqlx::query(r#"ALTER TABLE watcher_presets ADD UNIQUE KEY uniq_account_hash (account_hash)"#)
+                    .execute(self.get_sqlx_pool()).await;
+            }
         }
         
         info!("데이터베이스 스키마 마이그레이션 완료");
@@ -511,8 +783,103 @@ impl MySqlStorage {
     // mysql_async pool removed
 
     /// sqlx pool getter (transition)
-    pub fn get_sqlx_pool(&self) -> &SqlxMySqlPool {
-        &self.sqlx_pool
+    pub fn get_sqlx_pool(&self) -> &SqlxMySqlPool { &self.sqlx_pool }
+
+    pub fn decrypt_text(&self, account_hash: &str, group_id: i32, watcher_id: i32, data: Vec<u8>) -> String {
+        let cfg = crate::server::app_state::AppState::get_config();
+        if let Some(kv) = cfg.server_encode_key.as_ref() {
+            if kv.len() == 32 {
+                let key: &[u8;32] = kv.as_slice().try_into().expect("len checked");
+                let aad = format!("{}:{}:{}", account_hash, group_id, watcher_id);
+                if let Ok(pt) = crate::utils::crypto::aead_decrypt(key, &data, aad.as_bytes()) {
+                    return String::from_utf8_lossy(&pt).to_string();
+                }
+            }
+        }
+        String::from_utf8_lossy(&data).to_string()
+    }
+
+    pub async fn migrate_encrypt_paths(&self, batch_size: usize) -> Result<u64> {
+        use sqlx::Row;
+        let cfg = crate::server::app_state::AppState::get_config();
+        let Some(kv) = cfg.server_encode_key.as_ref() else {
+            return Ok(0);
+        };
+        if kv.len() != 32 { return Ok(0); }
+        let key: &[u8;32] = kv.as_slice().try_into().expect("len checked");
+
+        let mut tx = self.sqlx_pool.begin().await.map_err(|e| StorageError::Database(e.to_string()))?;
+        // Pick candidate rows: empty eq_index or empty token_path
+        let rows = sqlx::query(
+            r#"SELECT file_id, account_hash, group_id, watcher_id, file_path, filename
+               FROM files
+               WHERE (eq_index IS NULL OR LENGTH(eq_index)=0) OR (token_path IS NULL OR token_path='')
+               LIMIT ?"#
+        )
+            .bind(batch_size as i64)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        let mut updated: u64 = 0;
+        for row in rows.into_iter() {
+            let file_id: u64 = row.try_get("file_id").unwrap_or(0);
+            let account_hash: String = row.try_get("account_hash").unwrap_or_default();
+            let group_id: i32 = row.try_get("group_id").unwrap_or(0);
+            let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
+
+            // Try decrypt to detect if already encrypted; if decryption succeeds, skip encrypting again
+            let aad = format!("{}:{}:{}", account_hash, group_id, watcher_id);
+            let maybe_plain_path = match crate::utils::crypto::aead_decrypt(key, &file_path_b, aad.as_bytes()) {
+                Ok(pt) => Some(pt),
+                Err(_) => None,
+            };
+            let maybe_plain_name = match crate::utils::crypto::aead_decrypt(key, &filename_b, aad.as_bytes()) {
+                Ok(pt) => Some(pt),
+                Err(_) => None,
+            };
+
+            let (cipher_path, cipher_name, eq_index, token_path) = if let (Some(_), Some(_)) = (maybe_plain_path.as_ref(), maybe_plain_name.as_ref()) {
+                // Already encrypted; recompute indexes from decrypted plaintext
+                let plain_path = String::from_utf8_lossy(maybe_plain_path.as_ref().unwrap()).to_string();
+                let salt = crate::utils::crypto::derive_salt(key, "meta-index", &account_hash);
+                (
+                    file_path_b,
+                    filename_b,
+                    crate::utils::crypto::make_eq_index(&salt, &plain_path),
+                    crate::utils::crypto::make_token_path(&salt, &plain_path),
+                )
+            } else {
+                // Treat current bytes as plaintext UTF-8
+                let plain_path = String::from_utf8_lossy(&file_path_b).to_string();
+                let plain_name = String::from_utf8_lossy(&filename_b).to_string();
+                let ct_path = crate::utils::crypto::aead_encrypt(key, plain_path.as_bytes(), aad.as_bytes());
+                let ct_name = crate::utils::crypto::aead_encrypt(key, plain_name.as_bytes(), aad.as_bytes());
+                let salt = crate::utils::crypto::derive_salt(key, "meta-index", &account_hash);
+                (
+                    ct_path,
+                    ct_name,
+                    crate::utils::crypto::make_eq_index(&salt, &plain_path),
+                    crate::utils::crypto::make_token_path(&salt, &plain_path),
+                )
+            };
+
+            sqlx::query(r#"UPDATE files SET file_path = ?, filename = ?, eq_index = ?, token_path = ? WHERE file_id = ?"#)
+                .bind(cipher_path)
+                .bind(cipher_name)
+                .bind(eq_index)
+                .bind(token_path)
+                .bind(file_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+            updated += 1;
+        }
+
+        tx.commit().await.map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(updated)
     }
 }
 

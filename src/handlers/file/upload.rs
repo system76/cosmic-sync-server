@@ -64,7 +64,7 @@ pub async fn handle_upload_file(handler: &FileHandler, req: UploadFileRequest) -
     // 8. Store file via FileService
     match handler.app_state.file.store_file(&file_info, &req.file_data).await {
         Ok(_) => {
-            // Publish cross-instance file upload event
+            // Publish cross-instance file upload event (masking path and name)
             let routing_key = format!(
                 "file.uploaded.{}.{}.{}",
                 server_account_hash,
@@ -78,8 +78,8 @@ pub async fn handle_upload_file(handler: &FileHandler, req: UploadFileRequest) -
                 "device_hash": req.device_hash,
                 "group_id": server_group_id,
                 "watcher_id": server_watcher_id,
-                "file_path": normalized_file_path,
-                "filename": req.filename,
+                "file_path": "***",
+                "filename": "***",
                 "file_id": file_id,
                 "file_size": req.file_size,
                 "revision": req.revision + 1,
@@ -91,7 +91,7 @@ pub async fn handle_upload_file(handler: &FileHandler, req: UploadFileRequest) -
                 debug!("EventBus publish failed (noop or disconnected): {}", e);
             }
 
-            // Publish version created event
+            // Publish version created event (mask)
             let routing_key = format!(
                 "version.created.{}.{}",
                 server_account_hash,
@@ -104,8 +104,8 @@ pub async fn handle_upload_file(handler: &FileHandler, req: UploadFileRequest) -
                 "device_hash": req.device_hash,
                 "group_id": server_group_id,
                 "watcher_id": server_watcher_id,
-                "file_path": normalized_file_path,
-                "filename": req.filename,
+                "file_path": "***",
+                "filename": "***",
                 "file_id": file_id,
                 "revision": req.revision + 1,
                 "timestamp": chrono::Utc::now().timestamp(),

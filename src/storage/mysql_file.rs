@@ -146,21 +146,48 @@ impl MySqlFileExt for MySqlStorage {
         }
         
         // 새 파일 삽입 (계산된 revision 사용)
-        info!("💾 새 파일 INSERT 경로: file_id={}, revision={}, filename={}", 
+        info!("💾 새 파일 INSERT 경로: file_id={}, revision={}, filename= {}", 
              file_info.file_id, new_revision, file_info.filename);
+        
+        // Determine server key; if present and 32 bytes, encrypt path/name and compute indices deterministically
+        let cfg = crate::server::app_state::AppState::get_config();
+        let (file_path_bytes, filename_bytes, eq_index, token_path) = if let Some(kv) = cfg.server_encode_key.as_ref() {
+            if kv.len() == 32 {
+                let key: &[u8;32] = kv.as_slice().try_into().expect("len checked");
+                let aad = format!("{}:{}:{}", file_info.account_hash, file_info.group_id, file_info.watcher_id);
+                let ct_path = crate::utils::crypto::aead_encrypt(key, file_info.file_path.as_bytes(), aad.as_bytes());
+                let ct_name = crate::utils::crypto::aead_encrypt(key, file_info.filename.as_bytes(), aad.as_bytes());
+                let salt = crate::utils::crypto::derive_salt(key, "meta-index", &file_info.account_hash);
+                let eq_index = crate::utils::crypto::make_eq_index(&salt, &file_info.file_path);
+                let token_path = crate::utils::crypto::make_token_path(&salt, &file_info.file_path);
+                (ct_path, ct_name, eq_index, token_path)
+            } else {
+                let fpb = file_info.file_path.as_bytes().to_vec();
+                let fnb = file_info.filename.as_bytes().to_vec();
+                let eq = crate::utils::crypto::make_eq_index(file_info.account_hash.as_bytes(), &file_info.file_path);
+                let tp = crate::utils::crypto::make_token_path(file_info.account_hash.as_bytes(), &file_info.file_path);
+                (fpb, fnb, eq, tp)
+            }
+        } else {
+            let fpb = file_info.file_path.as_bytes().to_vec();
+            let fnb = file_info.filename.as_bytes().to_vec();
+            let eq = crate::utils::crypto::make_eq_index(file_info.account_hash.as_bytes(), &file_info.file_path);
+            let tp = crate::utils::crypto::make_token_path(file_info.account_hash.as_bytes(), &file_info.file_path);
+            (fpb, fnb, eq, tp)
+        };
         
         sqlx::query(
             r#"INSERT INTO files (
                 file_id, account_hash, device_hash, file_path, filename, file_hash, size,
                 is_deleted, revision, created_time, updated_time, group_id, watcher_id,
-                server_group_id, server_watcher_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?)"#
+                server_group_id, server_watcher_id, eq_index, token_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?, ?, ?)"#
         )
         .bind(file_info.file_id as i64)
         .bind(&file_info.account_hash)
         .bind(&file_info.device_hash)
-        .bind(&file_info.file_path)
-        .bind(&file_info.filename)
+        .bind(&file_path_bytes)
+        .bind(&filename_bytes)
         .bind(&file_info.file_hash)
         .bind(file_info.size as i64)
         .bind(new_revision)
@@ -170,6 +197,8 @@ impl MySqlFileExt for MySqlStorage {
         .bind(file_info.watcher_id)
         .bind(file_info.group_id)
         .bind(file_info.watcher_id)
+        .bind(&eq_index)
+        .bind(&token_path)
         .execute(&mut *tx)
         .await
         .map_err(|e| { error!("❌ 새 파일 정보 삽입 실패(sqlx): {}", e); StorageError::Database(format!("새 파일 정보 삽입 실패: {}", e)) })?;
@@ -204,8 +233,8 @@ impl MySqlFileExt for MySqlStorage {
             let file_id: u64 = row.try_get("file_id").unwrap_or(0);
             let account_hash: String = row.try_get("account_hash").unwrap_or_default();
             let device_hash: String = row.try_get("device_hash").unwrap_or_default();
-            let file_path: String = row.try_get("file_path").unwrap_or_default();
-            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
             let file_hash: String = row.try_get("file_hash").unwrap_or_default();
             let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
             let group_id: i32 = row.try_get("group_id").unwrap_or(0);
@@ -217,13 +246,13 @@ impl MySqlFileExt for MySqlStorage {
 
             let file_info = FileInfo {
                 file_id,
-                filename,
+                filename: self.decrypt_text(&account_hash, group_id, watcher_id, filename_b),
                 file_hash,
                 device_hash,
                 group_id,
                 watcher_id,
                 is_encrypted: false,
-                file_path,
+                file_path: self.decrypt_text(&account_hash, group_id, watcher_id, file_path_b),
                 updated_time: timestamp,
                 revision,
                 account_hash,
@@ -260,8 +289,8 @@ impl MySqlFileExt for MySqlStorage {
             let file_id: u64 = row.try_get("file_id").unwrap_or(0);
             let account_hash: String = row.try_get("account_hash").unwrap_or_default();
             let device_hash: String = row.try_get("device_hash").unwrap_or_default();
-            let file_path: String = row.try_get("file_path").unwrap_or_default();
-            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
             let file_hash: String = row.try_get("file_hash").unwrap_or_default();
             let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
             let group_id: i32 = row.try_get("group_id").unwrap_or(0);
@@ -274,13 +303,13 @@ impl MySqlFileExt for MySqlStorage {
 
             let file_info = FileInfo {
                 file_id,
-                filename,
+                filename: self.decrypt_text(&account_hash, group_id, watcher_id, filename_b),
                 file_hash,
                 device_hash,
                 group_id,
                 watcher_id,
                 is_encrypted: false,
-                file_path,
+                file_path: self.decrypt_text(&account_hash, group_id, watcher_id, file_path_b),
                 updated_time: timestamp,
                 revision,
                 account_hash,
@@ -299,6 +328,16 @@ impl MySqlFileExt for MySqlStorage {
         use sqlx::Row;
         debug!("경로로 파일 정보 조회: account_hash={}, file_path={}, group_id={}", account_hash, file_path, group_id);
 
+        // lookup by eq_index (deterministic)
+        let cfg = crate::server::app_state::AppState::get_config();
+        let eq_index = if let Some(kv) = cfg.server_encode_key.as_ref() {
+            if kv.len() == 32 {
+                let key: &[u8;32] = kv.as_slice().try_into().expect("len checked");
+                let salt = crate::utils::crypto::derive_salt(key, "meta-index", account_hash);
+                crate::utils::crypto::make_eq_index(&salt, file_path)
+            } else { crate::utils::crypto::make_eq_index(account_hash.as_bytes(), file_path) }
+        } else { crate::utils::crypto::make_eq_index(account_hash.as_bytes(), file_path) };
+
         let row_opt = sqlx::query(
             r#"SELECT 
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
@@ -306,11 +345,11 @@ impl MySqlFileExt for MySqlStorage {
                     UNIX_TIMESTAMP(updated_time) AS updated_ts,
                     group_id, watcher_id, revision, size
                FROM files 
-               WHERE account_hash = ? AND file_path = ? AND server_group_id = ? AND is_deleted = FALSE
+               WHERE account_hash = ? AND eq_index = ? AND server_group_id = ? AND is_deleted = FALSE
                ORDER BY revision DESC LIMIT 1"#
         )
         .bind(account_hash)
-        .bind(file_path)
+        .bind(&eq_index)
         .bind(group_id)
         .fetch_optional(self.get_sqlx_pool())
         .await
@@ -320,8 +359,8 @@ impl MySqlFileExt for MySqlStorage {
             let file_id: u64 = row.try_get("file_id").unwrap_or(0);
             let account_hash: String = row.try_get("account_hash").unwrap_or_default();
             let device_hash: String = row.try_get("device_hash").unwrap_or_default();
-            let file_path: String = row.try_get("file_path").unwrap_or_default();
-            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
             let file_hash: String = row.try_get("file_hash").unwrap_or_default();
             let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
             let group_id: i32 = row.try_get("group_id").unwrap_or(0);
@@ -333,13 +372,13 @@ impl MySqlFileExt for MySqlStorage {
 
             let file_info = FileInfo {
                 file_id,
-                filename,
+                filename: self.decrypt_text(&account_hash, group_id, watcher_id, filename_b),
                 file_hash,
                 device_hash,
                 group_id,
                 watcher_id,
                 is_encrypted: false,
-                file_path,
+                file_path: self.decrypt_text(&account_hash, group_id, watcher_id, file_path_b),
                 updated_time: timestamp,
                 revision,
                 account_hash,
@@ -378,8 +417,8 @@ impl MySqlFileExt for MySqlStorage {
             let file_id: u64 = row.try_get("file_id").unwrap_or(0);
             let account_hash: String = row.try_get("account_hash").unwrap_or_default();
             let device_hash: String = row.try_get("device_hash").unwrap_or_default();
-            let file_path: String = row.try_get("file_path").unwrap_or_default();
-            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
             let file_hash: String = row.try_get("file_hash").unwrap_or_default();
             let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
             let group_id: i32 = row.try_get("group_id").unwrap_or(0);
@@ -391,13 +430,13 @@ impl MySqlFileExt for MySqlStorage {
 
             let file_info = FileInfo {
                 file_id,
-                filename,
+                filename: self.decrypt_text(&account_hash, group_id, watcher_id, filename_b),
                 file_hash,
                 device_hash,
                 group_id,
                 watcher_id,
                 is_encrypted: false,
-                file_path,
+                file_path: self.decrypt_text(&account_hash, group_id, watcher_id, file_path_b),
                 updated_time: timestamp,
                 revision,
                 account_hash,
@@ -417,20 +456,15 @@ impl MySqlFileExt for MySqlStorage {
         debug!("경로와 파일명으로 파일 검색: account_hash={}, file_path={}, filename={}, revision={}", 
               account_hash, file_path, filename, revision);
 
-        let (search_path, search_filename) = if file_path.ends_with(&format!("/{}", filename)) || file_path.ends_with(filename) {
-            debug!("파일 경로에 이미 파일명이 포함됨: {}", file_path);
-            match file_path.rfind('/') {
-                Some(pos) => { let path = &file_path[0..pos]; let fname = &file_path[pos+1..]; (path.to_string(), fname.to_string()) },
-                None => { ("".to_string(), file_path.to_string()) }
-            }
-        } else {
-            debug!("경로와 파일명 분리: 경로={}, 파일명={}", file_path, filename);
-            (file_path.to_string(), filename.to_string())
-        };
-
-        debug!("검색 경로: {}, 파일명: {}", search_path, search_filename);
-
-        // 정확한 경로로 우선 검색 (revision 조건 유무에 따라 분기)
+        // equality by eq_index
+        let cfg = crate::server::app_state::AppState::get_config();
+        let eq_index = if let Some(kv) = cfg.server_encode_key.as_ref() {
+            if kv.len() == 32 {
+                let key: &[u8;32] = kv.as_slice().try_into().expect("len checked");
+                let salt = crate::utils::crypto::derive_salt(key, "meta-index", account_hash);
+                crate::utils::crypto::make_eq_index(&salt, file_path)
+            } else { crate::utils::crypto::make_eq_index(account_hash.as_bytes(), file_path) }
+        } else { crate::utils::crypto::make_eq_index(account_hash.as_bytes(), file_path) };
         let row_opt = if revision > 0 {
             sqlx::query(
                 r#"SELECT 
@@ -439,12 +473,11 @@ impl MySqlFileExt for MySqlStorage {
                         UNIX_TIMESTAMP(updated_time) as updated_ts,
                         group_id, watcher_id, revision, size
                    FROM files 
-                   WHERE account_hash = ? AND file_path = ? AND filename = ? AND is_deleted = FALSE AND revision = ?
+                   WHERE account_hash = ? AND eq_index = ? AND is_deleted = FALSE AND revision = ?
                    ORDER BY revision DESC LIMIT 1"#
             )
             .bind(account_hash)
-            .bind(&search_path)
-            .bind(&search_filename)
+            .bind(&eq_index)
             .bind(revision)
             .fetch_optional(self.get_sqlx_pool())
             .await
@@ -457,70 +490,31 @@ impl MySqlFileExt for MySqlStorage {
                         UNIX_TIMESTAMP(updated_time) as updated_ts,
                         group_id, watcher_id, revision, size
                    FROM files 
-                   WHERE account_hash = ? AND file_path = ? AND filename = ? AND is_deleted = FALSE
+                   WHERE account_hash = ? AND eq_index = ? AND is_deleted = FALSE
                    ORDER BY revision DESC LIMIT 1"#
             )
             .bind(account_hash)
-            .bind(&search_path)
-            .bind(&search_filename)
+            .bind(&eq_index)
             .fetch_optional(self.get_sqlx_pool())
             .await
             .map_err(|e| StorageError::Database(format!("파일 검색 실패(정확한 검색, sqlx): {}", e)))?
         };
 
-        let mut row_opt = row_opt;
-        if row_opt.is_none() {
-            debug!("정확한 경로로 검색 실패, 전체 경로 검색 시도: {}", file_path);
-            row_opt = if revision > 0 {
-                sqlx::query(
-                    r#"SELECT 
-                            file_id, account_hash, device_hash, file_path, filename, file_hash,
-                            UNIX_TIMESTAMP(created_time) as created_ts,
-                            UNIX_TIMESTAMP(updated_time) as updated_ts,
-                            group_id, watcher_id, revision, size
-                       FROM files 
-                       WHERE account_hash = ? AND (file_path = ? OR CONCAT(file_path, '/', filename) = ?) AND is_deleted = FALSE AND revision = ?
-                       ORDER BY revision DESC LIMIT 1"#
-                )
-                .bind(account_hash)
-                .bind(file_path)
-                .bind(file_path)
-                .bind(revision)
-                .fetch_optional(self.get_sqlx_pool())
-                .await
-                .map_err(|e| StorageError::Database(format!("파일 검색 실패(대체 검색, sqlx): {}", e)))?
-            } else {
-                sqlx::query(
-                    r#"SELECT 
-                            file_id, account_hash, device_hash, file_path, filename, file_hash,
-                            UNIX_TIMESTAMP(created_time) as created_ts,
-                            UNIX_TIMESTAMP(updated_time) as updated_ts,
-                            group_id, watcher_id, revision, size
-                       FROM files 
-                       WHERE account_hash = ? AND (file_path = ? OR CONCAT(file_path, '/', filename) = ?) AND is_deleted = FALSE
-                       ORDER BY revision DESC LIMIT 1"#
-                )
-                .bind(account_hash)
-                .bind(file_path)
-                .bind(file_path)
-                .fetch_optional(self.get_sqlx_pool())
-                .await
-                .map_err(|e| StorageError::Database(format!("파일 검색 실패(대체 검색, sqlx): {}", e)))?
-            };
-        }
-
         if let Some(row) = row_opt {
             let file_id: u64 = row.try_get("file_id").unwrap_or(0);
             let acc_hash: String = row.try_get("account_hash").unwrap_or_default();
             let device_hash: String = row.try_get("device_hash").unwrap_or_default();
-            let file_path: String = row.try_get("file_path").unwrap_or_default();
-            let filename: String = row.try_get("filename").unwrap_or_default();
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
             let file_hash: String = row.try_get("file_hash").unwrap_or_default();
             let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
             let group_id: i32 = row.try_get("group_id").unwrap_or(0);
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+
+            let file_path = self.decrypt_text(&acc_hash, group_id, watcher_id, file_path_b);
+            let filename = self.decrypt_text(&acc_hash, group_id, watcher_id, filename_b);
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
 
@@ -538,17 +532,10 @@ impl MySqlFileExt for MySqlStorage {
                 account_hash: acc_hash,
                 size,
             };
-
-            debug!("경로와 파일명으로 파일 검색 성공: file_id={}", file_id);
+            debug!("경로/파일명으로 파일 검색 성공: file_id={}", file_id);
             Ok(Some(file_info))
         } else {
-            warn!("❌ 파일 검색 실패 - 조건에 맞는 파일을 찾을 수 없음:");
-            warn!("   account_hash: {}", account_hash);
-            warn!("   file_path: {}", file_path);
-            warn!("   filename: {}", filename);
-            warn!("   search_path: {}", search_path);
-            warn!("   search_filename: {}", search_filename);
-            warn!("   revision: {}", revision);
+            debug!("경로/파일명 검색 결과 없음");
             Ok(None)
         }
     }
@@ -657,64 +644,109 @@ impl MySqlFileExt for MySqlStorage {
     async fn list_files(&self, account_hash: &str, group_id: i32, upload_time_from: Option<i64>) -> Result<Vec<FileInfo>> {
         use sqlx::Row;
         info!("파일 목록 조회: account_hash={}, group_id={}", account_hash, group_id);
-
-        let base_sql = r#"SELECT 
-                file_id, account_hash, device_hash, file_path, filename, file_hash,
-                UNIX_TIMESTAMP(created_time) as created_ts,
-                UNIX_TIMESTAMP(updated_time) as updated_ts,
-                group_id, watcher_id, revision, size
-            FROM files
-            WHERE account_hash = ? AND server_group_id = ? AND is_deleted = FALSE"#;
-
-        let rows = if let Some(time_from) = upload_time_from {
-            sqlx::query(&format!("{} AND updated_time >= FROM_UNIXTIME(?) ORDER BY updated_time DESC", base_sql))
-                .bind(account_hash)
-                .bind(group_id)
-                .bind(time_from)
-                .fetch_all(self.get_sqlx_pool())
-                .await
-                .map_err(|e| { error!("파일 목록 조회 중 SQL 오류(sqlx): {}", e); StorageError::Database(format!("파일 목록 조회 중 SQL 오류: {}", e)) })?
-        } else {
-            sqlx::query(&format!("{} ORDER BY updated_time DESC", base_sql))
-                .bind(account_hash)
-                .bind(group_id)
-                .fetch_all(self.get_sqlx_pool())
-                .await
-                .map_err(|e| { error!("파일 목록 조회 중 SQL 오류(sqlx): {}", e); StorageError::Database(format!("파일 목록 조회 중 SQL 오류: {}", e)) })?
-        };
-
+        
+        let rows = sqlx::query(
+            r#"SELECT 
+                    file_id, account_hash, device_hash, file_path, filename, file_hash,
+                    UNIX_TIMESTAMP(created_time) AS created_ts,
+                    UNIX_TIMESTAMP(updated_time) AS updated_ts,
+                    group_id, watcher_id, revision, size
+               FROM files 
+               WHERE account_hash = ? AND server_group_id = ? AND is_deleted = FALSE
+               ORDER BY updated_time DESC"#
+        )
+        .bind(account_hash)
+        .bind(group_id)
+        .fetch_all(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("파일 목록 조회 실패(sqlx): {}", e)))?;
+        
         let mut files = Vec::with_capacity(rows.len());
-        for row in rows {
+        for row in rows.into_iter() {
             let file_id: u64 = row.try_get("file_id").unwrap_or(0);
-            let filename: String = row.try_get("filename").unwrap_or_default();
-            let file_hash: String = row.try_get("file_hash").unwrap_or_default();
+            let acc_hash: String = row.try_get("account_hash").unwrap_or_default();
             let device_hash: String = row.try_get("device_hash").unwrap_or_default();
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
+            let file_hash: String = row.try_get("file_hash").unwrap_or_default();
+            let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
             let group_id: i32 = row.try_get("group_id").unwrap_or(0);
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
-            let file_path: String = row.try_get("file_path").unwrap_or_default();
-            let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
-            let revision: i64 = row.try_get("revision").unwrap_or(1);
+            let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
-
             files.push(FileInfo {
                 file_id,
-                filename,
+                filename: self.decrypt_text(&acc_hash, group_id, watcher_id, filename_b),
                 file_hash,
                 device_hash,
                 group_id,
                 watcher_id,
                 is_encrypted: false,
-                file_path,
+                file_path: self.decrypt_text(&acc_hash, group_id, watcher_id, file_path_b),
                 updated_time: timestamp,
                 revision,
-                account_hash: account_hash.to_string(),
+                account_hash: acc_hash,
                 size,
             });
         }
-
         info!("파일 {} 개를 찾았습니다: account_hash={}, group_id={}", files.len(), account_hash, group_id);
+        Ok(files)
+    }
+
+    /// 파일 목록 조회 (특정 디바이스 해시 제외)
+    async fn list_files_except_device(&self, account_hash: &str, group_id: i32, exclude_device_hash: &str, upload_time_from: Option<i64>) -> Result<Vec<FileInfo>> {
+        use sqlx::Row;
+        info!("파일 목록 조회(디바이스 제외): account_hash={}, group_id={}, exclude_device={}", account_hash, group_id, exclude_device_hash);
+
+        let rows = sqlx::query(
+            r#"SELECT 
+                    file_id, account_hash, device_hash, file_path, filename, file_hash,
+                    UNIX_TIMESTAMP(created_time) AS created_ts,
+                    UNIX_TIMESTAMP(updated_time) AS updated_ts,
+                    group_id, watcher_id, revision, size
+               FROM files 
+               WHERE account_hash = ? AND server_group_id = ? AND device_hash <> ? AND is_deleted = FALSE
+               ORDER BY updated_time DESC"#
+        )
+        .bind(account_hash)
+        .bind(group_id)
+        .bind(exclude_device_hash)
+        .fetch_all(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("파일 목록 조회 실패(sqlx): {}", e)))?;
+
+        let mut files = Vec::with_capacity(rows.len());
+        for row in rows.into_iter() {
+            let file_id: u64 = row.try_get("file_id").unwrap_or(0);
+            let acc_hash: String = row.try_get("account_hash").unwrap_or_default();
+            let device_hash: String = row.try_get("device_hash").unwrap_or_default();
+            let file_path_b: Vec<u8> = row.try_get("file_path").unwrap_or_default();
+            let filename_b: Vec<u8> = row.try_get("filename").unwrap_or_default();
+            let file_hash: String = row.try_get("file_hash").unwrap_or_default();
+            let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
+            let group_id: i32 = row.try_get("group_id").unwrap_or(0);
+            let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
+            let revision: i64 = row.try_get("revision").unwrap_or(0);
+            let size: u64 = row.try_get("size").unwrap_or(0);
+
+            let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
+            files.push(FileInfo {
+                file_id,
+                filename: self.decrypt_text(&acc_hash, group_id, watcher_id, filename_b),
+                file_hash,
+                device_hash,
+                group_id,
+                watcher_id,
+                is_encrypted: false,
+                file_path: self.decrypt_text(&acc_hash, group_id, watcher_id, file_path_b),
+                updated_time: timestamp,
+                revision,
+                account_hash: acc_hash,
+                size,
+            });
+        }
         Ok(files)
     }
     
@@ -815,76 +847,6 @@ impl MySqlFileExt for MySqlStorage {
         Ok(())
     }
     
-    /// 파일 목록 조회 (특정 디바이스 해시 제외)
-    async fn list_files_except_device(&self, account_hash: &str, group_id: i32, exclude_device_hash: &str, upload_time_from: Option<i64>) -> Result<Vec<FileInfo>> {
-        use sqlx::Row;
-        info!("파일 목록 조회 (디바이스 제외): account_hash={}, group_id={}, exclude_device={}", 
-              account_hash, group_id, exclude_device_hash);
-
-        let base_sql = r#"SELECT 
-                file_id, filename, file_hash, device_hash,
-                group_id, watcher_id, file_path, 
-                UNIX_TIMESTAMP(created_time) as created_ts,
-                UNIX_TIMESTAMP(updated_time) as updated_ts,
-                revision, size
-            FROM files 
-            WHERE account_hash = ? AND server_group_id = ? AND device_hash != ? AND is_deleted = FALSE"#;
-
-        let rows = if let Some(time_from) = upload_time_from {
-            sqlx::query(&format!("{} AND updated_time >= FROM_UNIXTIME(?) ORDER BY updated_time DESC", base_sql))
-                .bind(account_hash)
-                .bind(group_id)
-                .bind(exclude_device_hash)
-                .bind(time_from)
-                .fetch_all(self.get_sqlx_pool())
-                .await
-                .map_err(|e| { error!("파일 목록 조회 중 SQL 오류(sqlx): {}", e); StorageError::Database(format!("파일 목록 조회 중 SQL 오류: {}", e)) })?
-        } else {
-            sqlx::query(&format!("{} ORDER BY updated_time DESC", base_sql))
-                .bind(account_hash)
-                .bind(group_id)
-                .bind(exclude_device_hash)
-                .fetch_all(self.get_sqlx_pool())
-                .await
-                .map_err(|e| { error!("파일 목록 조회 중 SQL 오류(sqlx): {}", e); StorageError::Database(format!("파일 목록 조회 중 SQL 오류: {}", e)) })?
-        };
-
-        let mut files = Vec::with_capacity(rows.len());
-        for row in rows {
-            let file_id: u64 = row.try_get("file_id").unwrap_or(0);
-            let filename: String = row.try_get("filename").unwrap_or_default();
-            let file_hash: String = row.try_get("file_hash").unwrap_or_default();
-            let device_hash: String = row.try_get("device_hash").unwrap_or_default();
-            let group_id: i32 = row.try_get("group_id").unwrap_or(0);
-            let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
-            let file_path: String = row.try_get("file_path").unwrap_or_default();
-            let updated_ts: Option<i64> = row.try_get("updated_ts").unwrap_or(None);
-            let revision: i64 = row.try_get("revision").unwrap_or(1);
-            let size: u64 = row.try_get("size").unwrap_or(0);
-
-            let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
-
-            files.push(FileInfo {
-                file_id,
-                filename,
-                file_hash,
-                device_hash,
-                group_id,
-                watcher_id,
-                is_encrypted: false,
-                file_path,
-                updated_time: timestamp,
-                revision,
-                account_hash: account_hash.to_string(),
-                size,
-            });
-        }
-
-        info!("파일 {} 개를 찾았습니다 (디바이스 제외): account_hash={}, group_id={}, exclude_device={}", 
-              files.len(), account_hash, group_id, exclude_device_hash);
-        Ok(files)
-    }
-
     /// 경로와 파일명과 그룹 ID로 파일 검색
     async fn find_file_by_criteria(&self, account_hash: &str, group_id: i32, watcher_id: i32, file_path: &str, filename: &str) -> Result<Option<FileInfo>> {
         use sqlx::Row;

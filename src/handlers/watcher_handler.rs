@@ -393,6 +393,44 @@ impl WatcherHandler {
             if !watcher_ids.contains(&watcher_id) {
                 watcher_ids.push(watcher_id);
             }
+            // 조건이 동봉되었다면 저장(save_watcher_conditions) 보장
+            use crate::models::watcher::{WatcherCondition, ConditionType};
+            let now = chrono::Utc::now();
+            let mut conditions: Vec<WatcherCondition> = Vec::new();
+            for cd in &watcher_data.union_conditions {
+                conditions.push(WatcherCondition {
+                    id: None,
+                    account_hash: account_hash.clone(),
+                    watcher_id,
+                    local_watcher_id: watcher_data.watcher_id,
+                    local_group_id: group_id,
+                    condition_type: ConditionType::Union,
+                    key: cd.key.clone(),
+                    value: cd.value.clone(),
+                    operator: "equals".to_string(),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+            for cd in &watcher_data.subtracting_conditions {
+                conditions.push(WatcherCondition {
+                    id: None,
+                    account_hash: account_hash.clone(),
+                    watcher_id,
+                    local_watcher_id: watcher_data.watcher_id,
+                    local_group_id: group_id,
+                    condition_type: ConditionType::Subtract,
+                    key: cd.key.clone(),
+                    value: cd.value.clone(),
+                    operator: "equals".to_string(),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+            if let Err(e) = self.app_state.storage.save_watcher_conditions(watcher_id, &conditions).await {
+                error!("Failed to save watcher conditions: {}", e);
+                return Err(Status::internal("Failed to save watcher conditions"));
+            }
         }
         
         // UpdateWatcherGroupRequest 에서 WatcherGroup 생성
@@ -565,6 +603,21 @@ impl WatcherHandler {
                             stats.groups_updated += 1;
                             stats.total_operations += 1;
                             
+                            // 그룹 내 전달된 watcher 들 반영(조건 포함)
+                            for watcher in group_data.watchers {
+                                match self.app_state.create_or_get_watcher(&account_hash, group_id, &watcher).await {
+                                    Ok(wid) => {
+                                        // 이미 create_or_get 내에서 조건 저장 수행
+                                        debug!("Applied watcher {} for group {}", wid, group_id);
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to upsert watcher for group {}: {}", group_id, e);
+                                        conflict_details.push(format!("Watcher upsert failed in group {}: {}", group_id, e));
+                                        conflicts_detected = true;
+                                    }
+                                }
+                            }
+                            
                             // send real-time notification
                             if let Err(e) = self.app_state.broadcast_watcher_group_update(
                                 &account_hash,
@@ -597,6 +650,20 @@ impl WatcherHandler {
                     } else {
                         stats.groups_created += 1;
                         stats.total_operations += 1;
+                        
+                        // 그룹 내 전달된 watcher 들 반영(조건 포함)
+                        for watcher in group_data.watchers {
+                            match self.app_state.create_or_get_watcher(&account_hash, group_id, &watcher).await {
+                                Ok(wid) => {
+                                    debug!("Created watcher {} for new group {}", wid, group_id);
+                                }
+                                Err(e) => {
+                                    warn!("Failed to create watcher for new group {}: {}", group_id, e);
+                                    conflict_details.push(format!("Watcher create failed in new group {}: {}", group_id, e));
+                                    conflicts_detected = true;
+                                }
+                            }
+                        }
                         
                         // send real-time notification
                         if let Err(e) = self.app_state.broadcast_watcher_group_update(

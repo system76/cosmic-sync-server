@@ -389,6 +389,13 @@ impl StorageFactory {
                 // 스키마 초기화 실패는 경고만 하고 계속 진행
             }
         }
+        // 스키마 마이그레이션(ALTER 등) 수행
+        match storage.migrate_schema().await {
+            Ok(_) => info!("✅ Database schema migrated successfully"),
+            Err(e) => {
+                error!("❌ Failed to migrate database schema: {}", e);
+            }
+        }
         
         // 트랜잭션 자동 커밋 설정 확인(sqlx)
         match sqlx::query_scalar::<_, String>("SELECT @@autocommit")

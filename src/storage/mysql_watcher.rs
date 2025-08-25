@@ -744,12 +744,12 @@ impl MySqlWatcherExt for MySqlStorage {
             }
             return Err(StorageError::Database(format!("Failed to insert watcher: {}", e)));
         }
-
-        // 생성된 ID 조회 (sqlx)
-        let new_id: i32 = sqlx::query_scalar("SELECT LAST_INSERT_ID()")
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| { error!("Failed to get last insert ID: {}", e); StorageError::Database(format!("Failed to get last insert ID: {}", e)) })?;
+        // 생성된 ID 조회 (executor result)
+        let last_id_u64 = match &result {
+            Ok(res) => res.last_insert_id(),
+            Err(_) => 0,
+        } as u64;
+        let new_id: i32 = if last_id_u64 > i32::MAX as u64 { i32::MAX } else { last_id_u64 as i32 };
 
         if new_id == 0 {
             error!("Failed to create watcher: Invalid ID (0)");

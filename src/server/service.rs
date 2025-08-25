@@ -62,6 +62,7 @@ use futures::Stream;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use crate::auth::oauth::OAuthService;
+use base64::Engine as _;
 
 /// Synchronization service implementation
 pub struct SyncServiceImpl {
@@ -82,6 +83,15 @@ pub struct SyncServiceImpl {
 }
 
 impl SyncServiceImpl {
+    fn parse_account_key(s: &str) -> Option<[u8;32]> {
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD_NO_PAD.decode(s) {
+            if bytes.len() == 32 { return bytes.try_into().ok(); }
+        }
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(s) {
+            if bytes.len() == 32 { return bytes.try_into().ok(); }
+        }
+        None
+    }
     /// Create a new SyncServiceImpl instance
     pub fn new(app_state: Arc<AppState>) -> Self {
         let auth_handler = AuthHandler::new(app_state.clone());
@@ -191,7 +201,7 @@ impl SyncServiceImpl {
                     continue;
                 }
 
-                let file_info = crate::sync::FileInfo {
+                let mut file_info = crate::sync::FileInfo {
                     file_id: file.file_id as u64,
                     filename: file.filename.clone(),
                     file_hash: file.file_hash.clone(),
@@ -204,6 +214,19 @@ impl SyncServiceImpl {
                     is_encrypted: file.is_encrypted,
                     updated_time: Some(prost_types::Timestamp { seconds: file.updated_time.seconds, nanos: file.updated_time.nanos }),
                 };
+
+                // Encrypt metadata for transport if account key is available
+                if self.app_state.config.features.transport_encrypt_metadata {
+                    if let Ok(Some(kstr)) = self.app_state.storage.get_encryption_key(account_hash).await {
+                        if let Some(key) = Self::parse_account_key(&kstr) {
+                            let aad = format!("{}:{}", account_hash, device_hash);
+                            let ct_path = crate::utils::crypto::aead_encrypt(&key, file_info.file_path.as_bytes(), aad.as_bytes());
+                            let ct_name = crate::utils::crypto::aead_encrypt(&key, file_info.filename.as_bytes(), aad.as_bytes());
+                            file_info.file_path = base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_path);
+                            file_info.filename = base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_name);
+                        }
+                    }
+                }
 
                 let mut file_update_notification = crate::sync::FileUpdateNotification {
                     account_hash: account_hash.to_string(),

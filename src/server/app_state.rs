@@ -22,6 +22,7 @@ use crate::server::connection_handler::ConnectionHandler;
 use crate::server::connection_tracker::ConnectionTracker;
 use crate::server::connection_cleanup::{create_default_cleanup_scheduler, create_default_stats_reporter};
 use dashmap::DashMap;
+use once_cell::sync::OnceCell;
  
 
 /// Structure to store authentication session information
@@ -83,6 +84,8 @@ pub struct AppState {
     pub client_store: Arc<ClientStore>,
 }
 
+static APP_CONFIG: OnceCell<Config> = OnceCell::new();
+
 impl AppState {
     async fn create_event_bus() -> Arc<dyn EventBus> {
         let cfg = crate::config::settings::MessageBrokerConfig::load();
@@ -111,6 +114,11 @@ impl AppState {
                         error!("Failed to initialize MySQL schema: {}", e);
                         return Err(AppError::Storage(format!("Failed to initialize MySQL schema: {}", e)));
                     }
+                    // run schema migrations (ALTERs) for existing deployments
+                    if let Err(e) = storage.migrate_schema().await {
+                        error!("Failed to migrate MySQL schema: {}", e);
+                        return Err(AppError::Storage(format!("Failed to migrate MySQL schema: {}", e)));
+                    }
                     Ok(Arc::new(storage))
                 },
                 Err(e) => {
@@ -136,7 +144,7 @@ impl AppState {
         };
         
         // initialize notification manager
-        let notification_manager = Arc::new(NotificationManager::new());
+        let notification_manager = Arc::new(NotificationManager::new_with_storage(storage.clone()));
         
         // initialize OAuth service
         let oauth = OAuthService::new(storage.clone());
@@ -226,10 +234,11 @@ impl AppState {
             features: crate::config::settings::FeatureFlags::default(),
             storage: crate::config::settings::StorageConfig::default(),
             message_broker: crate::config::settings::MessageBrokerConfig::load(),
+            server_encode_key: None,
         };
 
         // initialize notification manager
-        let notification_manager = Arc::new(NotificationManager::new());
+        let notification_manager = Arc::new(NotificationManager::new_with_storage(storage.clone()));
 
         // initialize OAuth service
         let oauth = OAuthService::new(storage.clone());
@@ -259,14 +268,14 @@ impl AppState {
         let event_bus: Arc<dyn EventBus> = Self::create_event_bus().await;
 
         Ok(Self {
-            config: full_config,
+            config: full_config.clone(),
             storage,
             oauth,
             encryption,
             file,
             device,
             version_service,
-            notification_manager,
+            notification_manager: notification_manager.clone(),
             event_bus,
             auth_sessions: Arc::new(Mutex::new(HashMap::new())),
             connection_handler: Arc::new(RwLock::new(ConnectionHandler::new())),
@@ -279,8 +288,7 @@ impl AppState {
     pub async fn new(config: &Config) -> Result<Self, AppError> {
         let (storage, notification_manager, event_bus, oauth, encryption, file, device, version_service) = 
             Self::initialize_services(config.server.storage_path.as_ref()).await?;
-        
-        Ok(Self {
+        let state = Self {
             config: config.clone(),
             storage,
             oauth,
@@ -294,7 +302,9 @@ impl AppState {
             connection_handler: Arc::new(RwLock::new(ConnectionHandler::new())),
             connection_tracker: Arc::new(ConnectionTracker::new()),
             client_store: Arc::new(ClientStore::new()),
-        })
+        };
+        let _ = APP_CONFIG.set(state.config.clone());
+        Ok(state)
     }
     
     /// Create a new application state with given server configuration
@@ -307,6 +317,7 @@ impl AppState {
             features: crate::config::settings::FeatureFlags::default(),
             storage: crate::config::settings::StorageConfig::default(),
             message_broker: crate::config::settings::MessageBrokerConfig::load(),
+            server_encode_key: None,
         };
         
         let (storage, notification_manager, event_bus, oauth, encryption, file, device, version_service) = 
@@ -314,20 +325,21 @@ impl AppState {
         
         // create AppState object
         let app_state = Self {
-            config: full_config,
+            config: full_config.clone(),
             storage,
             oauth,
             encryption,
             file,
             device,
             version_service,
-            notification_manager,
+            notification_manager: notification_manager.clone(),
             event_bus,
             auth_sessions: Arc::new(Mutex::new(HashMap::new())),
             connection_handler: Arc::new(RwLock::new(ConnectionHandler::new())),
             connection_tracker: Arc::new(ConnectionTracker::new()),
             client_store: Arc::new(ClientStore::new()),
         };
+        notification_manager.set_transport_encrypt_metadata(full_config.features.transport_encrypt_metadata).await;
         
         // Start background connection monitoring tasks
         let cleanup_scheduler = create_default_cleanup_scheduler(app_state.connection_tracker.clone());
@@ -347,6 +359,7 @@ impl AppState {
         // later add statement to set app_state in connection_handler
         // currently skip to avoid circular reference
         
+        let _ = APP_CONFIG.set(app_state.config.clone());
         Ok(app_state)
     }
 
@@ -370,6 +383,44 @@ impl AppState {
         
         if let Some(watcher_id) = existing_watcher {
             info!("Found existing watcher with ID: {} for folder: {}", watcher_id, &watcher_data.folder);
+            // Upsert conditions for existing watcher (replace all)
+            use crate::models::watcher::{WatcherCondition, ConditionType};
+            let now = chrono::Utc::now();
+            let mut conditions: Vec<WatcherCondition> = Vec::new();
+            for cd in &watcher_data.union_conditions {
+                conditions.push(WatcherCondition {
+                    id: None,
+                    account_hash: account_hash.to_string(),
+                    watcher_id,
+                    local_watcher_id: watcher_data.watcher_id,
+                    local_group_id: group_id,
+                    condition_type: ConditionType::Union,
+                    key: cd.key.clone(),
+                    value: cd.value.clone(),
+                    operator: "equals".to_string(),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+            for cd in &watcher_data.subtracting_conditions {
+                conditions.push(WatcherCondition {
+                    id: None,
+                    account_hash: account_hash.to_string(),
+                    watcher_id,
+                    local_watcher_id: watcher_data.watcher_id,
+                    local_group_id: group_id,
+                    condition_type: ConditionType::Subtract,
+                    key: cd.key.clone(),
+                    value: cd.value.clone(),
+                    operator: "equals".to_string(),
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+            if let Err(e) = self.storage.save_watcher_conditions(watcher_id, &conditions).await {
+                error!("Failed to save watcher conditions for watcher {}: {}", watcher_id, e);
+                return Err(e);
+            }
             // return existing watcher ID
             return Ok(watcher_id);
         }
@@ -536,6 +587,10 @@ impl AppState {
 			}
 		});
 	}
+
+    pub fn get_config() -> Config {
+        APP_CONFIG.get().cloned().unwrap_or_else(|| Config::load())
+    }
 }
 
 /// Client store for tracking connected clients

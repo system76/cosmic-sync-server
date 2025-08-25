@@ -11,6 +11,9 @@ use chrono::Utc;
 use crate::server::notification_manager::NotificationManager;
 use std::io::{Error, ErrorKind};
 
+use crate::config::settings::Config as AppConfig;
+use base64::Engine as _;
+
 /// Service for managing file operations
 #[derive(Clone)]
 pub struct FileService {
@@ -72,6 +75,31 @@ impl FileService {
         }
     }
     
+    /// Prepare metadata: compute eq_index/token_path and encrypt path/name
+    fn prepare_metadata(&self, cfg: &AppConfig, mut fi: ModelFileInfo) -> ModelFileInfo {
+        let key_vec_opt = cfg.server_encode_key.as_ref();
+        let aad = format!("{}:{}:{}", fi.account_hash, fi.group_id, fi.watcher_id);
+        if let Some(kv) = key_vec_opt {
+            if kv.len() == 32 {
+                let key: &[u8;32] = kv.as_slice().try_into().expect("len checked");
+                // compute indices from normalized plaintext path
+                let _eq = crate::utils::crypto::make_eq_index(key, &fi.file_path);
+                let _tp = crate::utils::crypto::make_token_path(key, &fi.file_path);
+                // encrypt path/name
+                let ct_path = crate::utils::crypto::aead_encrypt(key, fi.file_path.as_bytes(), aad.as_bytes());
+                let ct_name = crate::utils::crypto::aead_encrypt(key, fi.filename.as_bytes(), aad.as_bytes());
+                fi.file_path = base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_path);
+                fi.filename = base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_name);
+                debug!("metadata prepared with encryption");
+            } else {
+                debug!("server_encode_key length != 32; skipping encryption");
+            }
+        } else {
+            debug!("server_encode_key not set; storing plaintext (dev only)");
+        }
+        fi
+    }
+
     pub async fn store_file(&self, file_info: &ModelFileInfo, data: &Vec<u8>) -> Result<(), StorageError> {
         self.store_file_with_update_type(file_info, data, sync::file_update_notification::UpdateType::Uploaded).await
     }

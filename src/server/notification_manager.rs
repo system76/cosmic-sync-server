@@ -5,6 +5,7 @@ use tonic::Status;
 use tracing::{debug, error, info, warn};
 use crate::sync::{FileUpdateNotification, WatcherGroupUpdateNotification, WatcherPresetUpdateNotification};
 use thiserror::Error;
+use base64::Engine as _;
 
 /// 알림 관리자 오류 타입
 #[derive(Error, Debug)]
@@ -42,17 +43,38 @@ pub struct NotificationManager {
     watcher_group_update_subscribers: Arc<Mutex<HashMap<String, WatcherGroupUpdateSender>>>,
     // account_hash:device_hash -> sender 매핑
     watcher_preset_update_subscribers: Arc<Mutex<HashMap<String, WatcherPresetUpdateSender>>>,
+    // storage for per-account encryption key lookup
+    storage: Arc<dyn crate::storage::Storage>,
+    // flag: transport encrypt metadata
+    transport_encrypt_metadata: Arc<Mutex<bool>>,
 }
 
 impl NotificationManager {
     /// 새 NotificationManager 인스턴스 생성
-    pub fn new() -> Self {
+    pub fn new_with_storage(storage: Arc<dyn crate::storage::Storage>) -> Self {
         Self {
             file_update_subscribers: Arc::new(Mutex::new(HashMap::new())),
             file_update_alias_accounts: Arc::new(Mutex::new(HashMap::new())),
             watcher_group_update_subscribers: Arc::new(Mutex::new(HashMap::new())),
             watcher_preset_update_subscribers: Arc::new(Mutex::new(HashMap::new())),
+            storage,
+            transport_encrypt_metadata: Arc::new(Mutex::new(true)),
         }
+    }
+    
+    fn parse_account_key(s: &str) -> Option<[u8;32]> {
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD_NO_PAD.decode(s) {
+            if bytes.len() == 32 { return bytes.try_into().ok(); }
+        }
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(s) {
+            if bytes.len() == 32 { return bytes.try_into().ok(); }
+        }
+        None
+    }
+    
+    pub async fn set_transport_encrypt_metadata(&self, enabled: bool) {
+        let mut flag = self.transport_encrypt_metadata.lock().await;
+        *flag = enabled;
     }
     
     /// 파일 업데이트 구독자 등록
@@ -143,6 +165,24 @@ impl NotificationManager {
                     let mut notif = notification.clone();
                     if let Some(alias_acc) = aliases.get(device_key) {
                         notif.account_hash = alias_acc.clone();
+                    }
+                    // Encrypt metadata for transport using per-account key and AAD=account:device
+                    if let Some(fi) = notif.file_info.as_mut() {
+                        let enabled = { *self.transport_encrypt_metadata.lock().await };
+                        if enabled {
+                            if let Ok(Some(kstr)) = self.storage.get_encryption_key(&account_hash).await {
+                                if let Some(key) = Self::parse_account_key(&kstr) {
+                                    // device_key format: "account:device"
+                                    let parts: Vec<&str> = device_key.split(':').collect();
+                                    let dev = if parts.len() == 2 { parts[1] } else { &notif.device_hash }; 
+                                    let aad = format!("{}:{}", account_hash, dev);
+                                    let ct_path = crate::utils::crypto::aead_encrypt(&key, fi.file_path.as_bytes(), aad.as_bytes());
+                                    let ct_name = crate::utils::crypto::aead_encrypt(&key, fi.filename.as_bytes(), aad.as_bytes());
+                                    fi.file_path = base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_path);
+                                    fi.filename = base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_name);
+                                }
+                            }
+                        }
                     }
                     match sender.send(Ok(notif)).await {
                         Ok(_) => {

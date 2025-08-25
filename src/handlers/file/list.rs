@@ -4,6 +4,21 @@ use tracing::{debug, error, info, warn};
 use crate::sync::{ListFilesRequest, ListFilesResponse};
 use crate::utils::time::timestamp_to_datetime;
 use super::super::file_handler::FileHandler;
+use base64::Engine as _;
+
+fn parse_account_key(s: &str) -> Option<[u8;32]> {
+    if let Ok(bytes) = base64::engine::general_purpose::STANDARD_NO_PAD.decode(s) {
+        if bytes.len() == 32 {
+            return bytes.try_into().ok();
+        }
+    }
+    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(s) {
+        if bytes.len() == 32 {
+            return bytes.try_into().ok();
+        }
+    }
+    None
+}
 
 pub async fn handle_list_files(handler: &FileHandler, req: ListFilesRequest) -> Result<Response<ListFilesResponse>, Status> {
     debug!("File list request: account={}, device={}, group_id={}, time_filter={:?}", req.account_hash, req.device_hash, req.group_id, req.upload_time_from);
@@ -45,6 +60,15 @@ pub async fn handle_list_files(handler: &FileHandler, req: ListFilesRequest) -> 
         info!("🔍 Recovery sync requested: filtering files updated since {}", filter_time);
     }
 
+    // Try to get account transport encryption key (for path/name)
+    let account_key: Option<[u8;32]> = if handler.app_state.config.features.transport_encrypt_metadata {
+        match handler.app_state.storage.get_encryption_key(&req.account_hash).await {
+            Ok(Some(k)) => parse_account_key(&k),
+            _ => None,
+        }
+    } else { None };
+    let aad = format!("{}:{}", req.account_hash, req.device_hash);
+
     // Get filtered files using server group_id
     match handler.app_state.file.list_files_filtered_by_device(server_group_id, &req.account_hash, &req.device_hash).await {
         Ok(files) => {
@@ -76,15 +100,27 @@ pub async fn handle_list_files(handler: &FileHandler, req: ListFilesRequest) -> 
                     }
                 };
 
+                // Encrypt path/name for transport if account key is available
+                let (enc_path, enc_name) = if let Some(key) = account_key.as_ref() {
+                    let ct_path = crate::utils::crypto::aead_encrypt(key, file.file_path.as_bytes(), aad.as_bytes());
+                    let ct_name = crate::utils::crypto::aead_encrypt(key, file.filename.as_bytes(), aad.as_bytes());
+                    (
+                        base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_path),
+                        base64::engine::general_purpose::STANDARD_NO_PAD.encode(ct_name),
+                    )
+                } else {
+                    (file.file_path.clone(), file.filename.clone())
+                };
+
                 let file_info = crate::sync::FileInfo {
                     file_id: file.file_id,
-                    filename: file.filename.clone(),
+                    filename: enc_name,
                     file_hash: file.file_hash.clone(),
                     device_hash: file.device_hash.clone(),
                     group_id: req.group_id,
                     watcher_id: client_watcher_id,
                     is_encrypted: file.is_encrypted,
-                    file_path: file.file_path.clone(),
+                    file_path: enc_path,
                     updated_time: Some(prost_types::Timestamp { seconds: file.updated_time.seconds, nanos: 0 }),
                     revision: file.revision,
                     file_size: file.size,

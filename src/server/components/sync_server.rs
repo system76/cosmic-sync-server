@@ -4,7 +4,7 @@ use crate::config::settings::ServerConfig;
 use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 use serde::{Serialize, Deserialize};
 
 /// Metrics specific to the sync server
@@ -130,8 +130,8 @@ impl Component for SyncServerComponent {
         &self.config
     }
     
-    async fn start(&mut self) -> Result<(), Self::Error> {
-        info!("🚀 Starting SyncServerComponent");
+    async fn start(&mut self) -> Result<(), SyncServerError> {
+        info!("Starting SyncServer component");
         
         self.status = ComponentStatus::Starting;
         self.start_time = Some(chrono::Utc::now());
@@ -140,6 +140,21 @@ impl Component for SyncServerComponent {
         self.app_state.start_client_cleanup_task();
         // Start retention cleanup task
         self.app_state.start_retention_cleanup_task();
+
+        // Optional: run one-time migration for encrypting existing paths
+        {
+            let cfg = &self.app_state.config;
+            if let Some(key) = cfg.server_encode_key.as_ref() {
+                if key.len() == 32 {
+                    if let Some(mysql) = self.app_state.storage.as_any().downcast_ref::<crate::storage::mysql::MySqlStorage>() {
+                        match mysql.migrate_encrypt_paths(1000).await {
+                            Ok(updated) => info!("🔒 Path encryption migration updated {} rows", updated),
+                            Err(e) => warn!("Path encryption migration failed: {}", e),
+                        }
+                    }
+                }
+            }
+        }
         
         // Here we would start the actual gRPC server
         // For now, we'll simulate a successful start

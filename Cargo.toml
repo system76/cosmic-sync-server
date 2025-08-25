@@ -80,6 +80,9 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4.31", features = ["serde"] }
 rand = "0.8"
 sha2 = "0.10"
+hmac = "0.12"
+aes-gcm = "0.10"
+aes = "0.8"
 md5 = "0.7"
 base64 = "0.21"
 hex = "0.4"
