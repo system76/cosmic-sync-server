@@ -427,9 +427,14 @@ impl WatcherHandler {
                     updated_at: now,
                 });
             }
-            if let Err(e) = self.app_state.storage.save_watcher_conditions(watcher_id, &conditions).await {
-                error!("Failed to save watcher conditions: {}", e);
-                return Err(Status::internal("Failed to save watcher conditions"));
+            // Guard: skip overwriting when both arrays are empty
+            if !(watcher_data.union_conditions.is_empty() && watcher_data.subtracting_conditions.is_empty()) {
+                if let Err(e) = self.app_state.storage.save_watcher_conditions(watcher_id, &conditions).await {
+                    error!("Failed to save watcher conditions: {}", e);
+                    return Err(Status::internal("Failed to save watcher conditions"));
+                }
+            } else {
+                debug!("Skip saving empty conditions to preserve existing watcher conditions: watcher_id={}", watcher_id);
             }
         }
         

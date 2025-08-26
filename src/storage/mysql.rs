@@ -3,7 +3,7 @@ use chrono::prelude::*;
 // mysql_async removed; using only sqlx
 use sqlx::mysql::MySqlPoolOptions as SqlxMySqlPoolOptions;
 use sqlx::MySqlPool as SqlxMySqlPool;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::storage::{Result, Storage, StorageError, StorageMetrics};
 use crate::models::watcher::WatcherCondition;
@@ -624,6 +624,23 @@ impl MySqlStorage {
             info!("watchers 테이블 생성 완료");
         }
 
+        // watchers 복합 유니크 인덱스 보장 (account_hash, local_group_id, watcher_id)
+        let has_unique_acc_local_wid: Option<i64> = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM information_schema.statistics 
+               WHERE table_schema = DATABASE() AND table_name = 'watchers' 
+                 AND index_name = 'uniq_watchers_acc_local_wid' AND non_unique = 0"#
+        ).fetch_one(self.get_sqlx_pool()).await.ok();
+        if has_unique_acc_local_wid.unwrap_or(0) == 0 {
+            info!("watchers 테이블에 uniq_watchers_acc_local_wid 유니크 인덱스 생성");
+            // 인덱스 생성 시 컬럼 구성 일치 필요
+            if let Err(e) = sqlx::query(
+                r#"CREATE UNIQUE INDEX uniq_watchers_acc_local_wid 
+                   ON watchers(account_hash, local_group_id, watcher_id)"#
+            ).execute(self.get_sqlx_pool()).await {
+                warn!("유니크 인덱스 생성 경고(이미 존재 가능): {}", e);
+            }
+        }
+
         // watchers 테이블에 watcher_id 컬럼 존재 여부 확인
         let has_watcher_id_in_watchers: bool = sqlx::query_scalar(
             r#"SELECT COUNT(*) > 0 
@@ -1156,7 +1173,7 @@ impl Storage for MySqlStorage {
         
         // 서버 watcher_id로 클라이언트 watcher_id 조회(sqlx)
         let result: Option<(i32, i32)> = sqlx::query_as(
-            r#"SELECT group_id, watcher_id FROM watchers WHERE id = ? AND account_hash = ?"#
+            r#"SELECT local_group_id, watcher_id FROM watchers WHERE id = ? AND account_hash = ?"#
         )
         .bind(server_watcher_id)
         .bind(account_hash)

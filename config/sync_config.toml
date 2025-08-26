@@ -1,0 +1,29 @@
+# Sample sync_config.toml for restoring watcher conditions during bootstrap
+# This file is optional. If present, server can import it into DB.
+
+account_hash = ""
+
+[watcher_group]
+# Client group_id
+id = 1
+# Title is optional
+title = "Synced Group"
+
+[[watcher]]
+# Client watcher_id
+id = 1
+folder = "~/Downloads/sync"
+recursive_path = true
+preset = false
+custom_type = ""
+update_mode = "overwrite"
+
+# Rules to include
+[[watcher.union_conditions]]
+key = "extension"
+value = ["txt", "md"]
+
+# Rules to exclude
+[[watcher.subtracting_conditions]]
+key = "filename"
+value = ["*.tmp", "*.bak"]

@@ -8,6 +8,9 @@ on:
       - staging
   workflow_dispatch: {}
 
+env:
+  AWS_REGION: us-east-1
+
 jobs:
   Publish:
     runs-on: ubuntu-latest
@@ -18,7 +21,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.STAGING_AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: login-ecr

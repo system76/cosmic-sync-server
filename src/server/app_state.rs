@@ -386,40 +386,47 @@ impl AppState {
             // Upsert conditions for existing watcher (replace all)
             use crate::models::watcher::{WatcherCondition, ConditionType};
             let now = chrono::Utc::now();
-            let mut conditions: Vec<WatcherCondition> = Vec::new();
-            for cd in &watcher_data.union_conditions {
-                conditions.push(WatcherCondition {
-                    id: None,
-                    account_hash: account_hash.to_string(),
-                    watcher_id,
-                    local_watcher_id: watcher_data.watcher_id,
-                    local_group_id: group_id,
-                    condition_type: ConditionType::Union,
-                    key: cd.key.clone(),
-                    value: cd.value.clone(),
-                    operator: "equals".to_string(),
-                    created_at: now,
-                    updated_at: now,
-                });
-            }
-            for cd in &watcher_data.subtracting_conditions {
-                conditions.push(WatcherCondition {
-                    id: None,
-                    account_hash: account_hash.to_string(),
-                    watcher_id,
-                    local_watcher_id: watcher_data.watcher_id,
-                    local_group_id: group_id,
-                    condition_type: ConditionType::Subtract,
-                    key: cd.key.clone(),
-                    value: cd.value.clone(),
-                    operator: "equals".to_string(),
-                    created_at: now,
-                    updated_at: now,
-                });
-            }
-            if let Err(e) = self.storage.save_watcher_conditions(watcher_id, &conditions).await {
-                error!("Failed to save watcher conditions for watcher {}: {}", watcher_id, e);
-                return Err(e);
+
+            // Guard: if client sends both arrays empty, preserve server-side existing conditions
+            let incoming_empty = watcher_data.union_conditions.is_empty() && watcher_data.subtracting_conditions.is_empty();
+            if !incoming_empty {
+                let mut conditions: Vec<WatcherCondition> = Vec::new();
+                for cd in &watcher_data.union_conditions {
+                    conditions.push(WatcherCondition {
+                        id: None,
+                        account_hash: account_hash.to_string(),
+                        watcher_id,
+                        local_watcher_id: watcher_data.watcher_id,
+                        local_group_id: group_id,
+                        condition_type: ConditionType::Union,
+                        key: cd.key.clone(),
+                        value: cd.value.clone(),
+                        operator: "equals".to_string(),
+                        created_at: now,
+                        updated_at: now,
+                    });
+                }
+                for cd in &watcher_data.subtracting_conditions {
+                    conditions.push(WatcherCondition {
+                        id: None,
+                        account_hash: account_hash.to_string(),
+                        watcher_id,
+                        local_watcher_id: watcher_data.watcher_id,
+                        local_group_id: group_id,
+                        condition_type: ConditionType::Subtract,
+                        key: cd.key.clone(),
+                        value: cd.value.clone(),
+                        operator: "equals".to_string(),
+                        created_at: now,
+                        updated_at: now,
+                    });
+                }
+                if let Err(e) = self.storage.save_watcher_conditions(watcher_id, &conditions).await {
+                    error!("Failed to save watcher conditions for watcher {}: {}", watcher_id, e);
+                    return Err(e);
+                }
+            } else {
+                debug!("Incoming conditions are empty; preserving existing watcher conditions: watcher_id={}", watcher_id);
             }
             // return existing watcher ID
             return Ok(watcher_id);
