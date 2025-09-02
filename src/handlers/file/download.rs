@@ -75,6 +75,8 @@ pub async fn handle_download_file(handler: &FileHandler, req: DownloadFileReques
                     seconds: file_info.updated_time.seconds,
                     nanos: 0,
                 }),
+                file_size: file_info.size,
+                key_id: file_info.key_id.clone().unwrap_or_default(),
             }))
         }
         Ok(None) => Ok(Response::new(response::file_download_error("File data not found"))),

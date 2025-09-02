@@ -288,12 +288,14 @@ impl MySqlStorage {
             server_watcher_id INT NOT NULL DEFAULT 0,
             eq_index VARBINARY(32) NOT NULL,
             token_path VARCHAR(4096) NOT NULL,
+            key_id VARCHAR(64) NULL,
             INDEX (account_hash),
             INDEX (file_id),
             INDEX (file_hash),
             INDEX (account_hash, group_id),
             INDEX (eq_index),
-            INDEX (token_path),
+            INDEX token_path_prefix (token_path(255)),
+            INDEX (account_hash, key_id),
             FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
         )";
         
@@ -428,17 +430,41 @@ impl MySqlStorage {
         if !has_token_path {
             info!("files 테이블에 token_path 컬럼 추가");
             sqlx::query(r#"ALTER TABLE files ADD COLUMN token_path VARCHAR(4096) NULL"#)
-                .execute(self.get_sqlx_pool()).await
-                .map_err(|e| { error!("token_path 컬럼 추가 실패: {}", e); StorageError::Database(format!("token_path 컬럼 추가 실패: {}", e)) })?;
-            let has_token_idx: bool = sqlx::query_scalar(
-                r#"SELECT COUNT(*) > 0 FROM information_schema.statistics 
-                   WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'token_path'"#
-            ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| StorageError::Database(format!("token_path 인덱스 확인 실패: {}", e)))?;
-            if !has_token_idx {
-                sqlx::query(r#"CREATE INDEX idx_files_token_path ON files(token_path)"#)
-                    .execute(self.get_sqlx_pool()).await
-                    .map_err(|e| StorageError::Database(format!("token_path 인덱스 생성 실패: {}", e)))?;
-            }
+                .execute(self.get_sqlx_pool())
+                .await
+                .ok();
+
+            // Optional: composite index for account_hash + key_id to support operational queries
+            sqlx::query(r#"CREATE INDEX idx_files_account_keyid ON files (account_hash, key_id)"#)
+                .execute(self.get_sqlx_pool())
+                .await
+                .ok();
+
+            sqlx::query(r#"ALTER TABLE files ADD COLUMN server_group_id INT NOT NULL DEFAULT 0"#)
+                .execute(self.get_sqlx_pool())
+                .await
+                .ok();
+        }
+
+        // files 테이블에 key_id 컬럼 존재 여부 확인 (token_path와 독립적으로 확인)
+        let has_key_id: bool = sqlx::query_scalar(
+            r#"SELECT COUNT(*) > 0 FROM information_schema.columns 
+               WHERE table_schema = DATABASE() AND table_name = 'files' AND column_name = 'key_id'"#
+        ).fetch_one(self.get_sqlx_pool()).await.map_err(|e| { 
+            error!("key_id 컬럼 존재 여부 확인 실패: {}", e); 
+            StorageError::Database(format!("컬럼 존재 여부 확인 실패: {}", e)) 
+        })?;
+        if !has_key_id {
+            info!("files 테이블에 key_id 컬럼 추가");
+            sqlx::query(r#"ALTER TABLE files ADD COLUMN key_id VARCHAR(64) NULL"#)
+                .execute(self.get_sqlx_pool())
+                .await
+                .map_err(|e| StorageError::Database(format!("key_id 컬럼 추가 실패: {}", e)))?;
+            // 인덱스는 이미 존재할 수 있으니 실패는 무시
+            sqlx::query(r#"CREATE INDEX idx_files_account_keyid ON files (account_hash, key_id)"#)
+                .execute(self.get_sqlx_pool())
+                .await
+                .ok();
         }
 
         let has_server_group_id: bool = sqlx::query_scalar(
@@ -462,7 +488,7 @@ impl MySqlStorage {
                 .execute(self.get_sqlx_pool()).await
                 .map_err(|e| StorageError::Database(format!("server_watcher_id 컬럼 추가 실패: {}", e)))?;
         }
-
+        
         // file_path/filename 컬럼 형식 수정 (VARBINARY)
         let path_is_varbinary: bool = sqlx::query_scalar(
             r#"SELECT DATA_TYPE = 'varbinary' FROM information_schema.columns 
@@ -1548,12 +1574,24 @@ impl Storage for MySqlStorage {
     async fn store_file(&self, file: &crate::models::file::SyncFile) -> Result<()> {
         debug!("Storing file: file_id={}, revision={}", file.file_id, file.revision);
 
+        // Carry over previous key_id for this file if present (SyncFile does not contain key_id)
+        let prev_key_id: Option<String> = sqlx::query_scalar(
+            r#"SELECT key_id FROM files WHERE account_hash = ? AND file_id = ? ORDER BY updated_time DESC LIMIT 1"#
+        )
+        .bind(&file.user_id)
+        .bind(file.file_id)
+        .fetch_optional(self.get_sqlx_pool())
+        .await
+        .map_err(|e| StorageError::Database(format!("Failed to fetch previous key_id: {}", e)))?
+        .flatten();
+        if let Some(ref kid) = prev_key_id { debug!("🔐 Carrying over key_id for new version: {} -> {}", file.file_id, kid); } else { debug!("🔐 No previous key_id found for file_id={}, inserting NULL", file.file_id); }
+
         sqlx::query(
             r#"INSERT INTO files (
                 file_id, account_hash, device_hash, file_path, filename, file_hash, size,
                 is_deleted, revision, created_time, updated_time, group_id, watcher_id,
-                server_group_id, server_watcher_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?)"#
+                server_group_id, server_watcher_id, key_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?, ?)"#
         )
         .bind(file.file_id)
         .bind(&file.user_id)
@@ -1570,6 +1608,7 @@ impl Storage for MySqlStorage {
         .bind(file.watcher_id)
         .bind(file.group_id)
         .bind(file.watcher_id)
+        .bind(prev_key_id.as_deref())
         .execute(self.get_sqlx_pool())
         .await
         .map_err(|e| StorageError::Database(format!("Failed to store file: {}", e)))?;

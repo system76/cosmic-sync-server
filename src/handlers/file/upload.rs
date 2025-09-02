@@ -45,6 +45,11 @@ pub async fn handle_upload_file(handler: &FileHandler, req: UploadFileRequest) -
         Err(msg) => return Ok(Response::new(response::file_upload_error(msg))),
     };
 
+    // Warn if storage backend is memory (diagnostic)
+    if handler.app_state.storage.as_any().downcast_ref::<crate::storage::memory::MemoryStorage>().is_some() {
+        tracing::warn!("Upload using in-memory storage backend - data will not persist in MySQL");
+    }
+
     // 6. Convert client IDs to server IDs via FileService helper
     let (server_group_id, server_watcher_id) = match handler.app_state.file
         .ensure_server_ids_for_upload(&server_account_hash, &req.device_hash, req.group_id, req.watcher_id, Some(&normalized_file_path))

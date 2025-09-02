@@ -153,22 +153,33 @@ impl MySqlWatcherExt for MySqlStorage {
         }
 
         // 기존 사용자 데이터 모두 삭제 (사용자별 하나의 설정만 허용)
-        sqlx::query(r#"DELETE FROM watchers WHERE account_hash = ?"#)
+        // 계정 전체 삭제 대신, 해당 그룹을 UPSERT하여 server_group_id(id)를 안정적으로 유지한다
+        let _ = sqlx::query(r#"INSERT INTO watcher_groups (
+                group_id, account_hash, device_hash, title, 
+                created_at, updated_at, is_active
+              ) VALUES (?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?)
+              ON DUPLICATE KEY UPDATE 
+                title = VALUES(title),
+                updated_at = VALUES(updated_at),
+                is_active = VALUES(is_active)"#)
+            .bind(watcher_group.group_id)
             .bind(account_hash)
+            .bind(device_hash)
+            .bind(&watcher_group.title)
+            .bind(watcher_group.created_at.timestamp())
+            .bind(watcher_group.updated_at.timestamp())
+            .bind(watcher_group.is_active)
             .execute(&mut *tx)
-            .await
-            .map_err(|e| { error!("Failed to delete watchers: {}", e); StorageError::Database(format!("Failed to delete watchers: {}", e)) })?;
-
-        sqlx::query(r#"DELETE FROM watcher_groups WHERE account_hash = ?"#)
-            .bind(account_hash)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| { error!("Failed to delete watcher_groups: {}", e); StorageError::Database(format!("Failed to delete watcher_groups: {}", e)) })?;
-
+            .await;
+ 
         let res = sqlx::query(r#"INSERT INTO watcher_groups (
                 group_id, account_hash, device_hash, title, 
                 created_at, updated_at, is_active
-              ) VALUES (?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?)"#)
+              ) VALUES (?, ?, ?, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?)
+              ON DUPLICATE KEY UPDATE 
+                title = VALUES(title),
+                updated_at = VALUES(updated_at),
+                is_active = VALUES(is_active)"#)
             .bind(watcher_group.group_id)
             .bind(account_hash)
             .bind(device_hash)
@@ -686,33 +697,8 @@ impl MySqlWatcherExt for MySqlStorage {
                 info!("Client watcher is newer (server: {}, client: {}), proceeding with watcher update", 
                       existing_datetime, client_datetime);
                 
-                // 기존 watcher와 conditions 삭제 (local_group_id 포함)
-                debug!("Deleting existing watcher and conditions with local_group_id: {}", group_id);
-                
-                // 기존 파일들을 orphaned 상태로 마킹 (워처 변경 시 파일 데이터 보호)
-                sqlx::query(r#"UPDATE files SET watcher_id = 0 WHERE watcher_id = (SELECT id FROM watchers WHERE watcher_id = ? AND account_hash = ? AND local_group_id = ?)"#)
-                    .bind(watcher_data.watcher_id)
-                    .bind(account_hash)
-                    .bind(group_id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| { error!("Failed to mark files as orphaned: {}", e); StorageError::Database(format!("Failed to mark files as orphaned: {}", e)) })?;
-                
-                sqlx::query(r#"DELETE FROM watcher_conditions WHERE watcher_id = (SELECT id FROM watchers WHERE watcher_id = ? AND account_hash = ? AND local_group_id = ?)"#)
-                    .bind(watcher_data.watcher_id)
-                    .bind(account_hash)
-                    .bind(group_id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| { error!("Failed to delete existing watcher conditions: {}", e); StorageError::Database(format!("Failed to delete existing watcher conditions: {}", e)) })?;
-                
-                sqlx::query(r#"DELETE FROM watchers WHERE watcher_id = ? AND account_hash = ? AND local_group_id = ?"#)
-                    .bind(watcher_data.watcher_id)
-                    .bind(account_hash)
-                    .bind(group_id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|e| { error!("Failed to delete existing watcher: {}", e); StorageError::Database(format!("Failed to delete existing watcher: {}", e)) })?;
+                // 기존 파일/워처를 삭제하지 않는다. 대신 이후 UPSERT로 워처 레코드를 갱신해 ID를 보존한다.
+                // 조건은 필요 시 별도 경로에서 정리한다.
             }
         }
 
@@ -721,7 +707,15 @@ impl MySqlWatcherExt for MySqlStorage {
                 watcher_id, account_hash, group_id, local_group_id, folder, title,
                 is_recursive, created_at, updated_at, 
                 is_active, extra_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                folder = VALUES(folder),
+                title = VALUES(title),
+                is_recursive = VALUES(is_recursive),
+                updated_at = VALUES(updated_at),
+                is_active = VALUES(is_active),
+                extra_json = VALUES(extra_json),
+                group_id = VALUES(group_id)"#)
             .bind(watcher_data.watcher_id)
             .bind(account_hash)
             .bind(db_group_id)
@@ -738,10 +732,8 @@ impl MySqlWatcherExt for MySqlStorage {
 
         // 삽입에 실패한 경우 롤백 후 오류 반환
         if let Err(e) = result {
-            error!("Failed to insert watcher: {}", e);
-            if let Err(rollback_err) = tx.rollback().await {
-                error!("Failed to rollback transaction: {}", rollback_err);
-            }
+            debug!("Rolling back due to watcher insert error: {}", e);
+            tx.rollback().await.ok();
             return Err(StorageError::Database(format!("Failed to insert watcher: {}", e)));
         }
         // 생성된 ID 조회 (executor result)

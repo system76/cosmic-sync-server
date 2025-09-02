@@ -35,6 +35,11 @@ pub async fn handle_list_files(handler: &FileHandler, req: ListFilesRequest) -> 
         }
     }
 
+    // Warn if storage backend is memory (diagnostic)
+    if handler.app_state.storage.as_any().downcast_ref::<crate::storage::memory::MemoryStorage>().is_some() {
+        warn!("ListFiles using in-memory storage backend - data may appear empty if previous uploads were to MySQL");
+    }
+
     // Convert client group_id to server group_id via FileService
     let server_group_id = match handler.app_state.file.convert_client_group_to_server(&req.account_hash, req.group_id).await {
         Ok(Some(id)) => id,

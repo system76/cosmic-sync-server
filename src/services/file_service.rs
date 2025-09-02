@@ -184,6 +184,7 @@ impl FileService {
             revision: req.revision,
             account_hash: req.account_hash.clone(),
             size: req.file_size,
+            key_id: if req.key_id.is_empty() { None } else { Some(req.key_id.clone()) },
         }
     }
 

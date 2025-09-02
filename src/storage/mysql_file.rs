@@ -84,14 +84,17 @@ impl MySqlFileExt for MySqlStorage {
             // 동일한 file_id가 이미 존재하는 경우 - 파일 정보만 업데이트
             
             // 기존 파일 정보 업데이트
+            if let Some(ref kid) = file_info.key_id { debug!("🔐 Updating key_id for existing file_id: {} -> {}", file_info.file_id, kid); } else { debug!("🔐 Skipping key_id update (None) for existing file_id: {}", file_info.file_id); }
             sqlx::query(r#"UPDATE files SET 
                     file_hash = ?, device_hash = ?, updated_time = FROM_UNIXTIME(?), size = ?,
-                    revision = revision + 1
+                    revision = revision + 1,
+                    key_id = COALESCE(?, key_id)
                   WHERE file_id = ?"#)
                 .bind(&file_info.file_hash)
                 .bind(&file_info.device_hash)
                 .bind(updated_time)
                 .bind(file_info.size as i64)
+                .bind(file_info.key_id.as_deref())
                 .bind(file_info.file_id)
                 .execute(&mut *tx)
                 .await
@@ -117,9 +120,9 @@ impl MySqlFileExt for MySqlStorage {
         .map_err(|e| { error!("❌ 최대 revision 조회 실패(sqlx): {}", e); StorageError::Database(format!("최대 revision 조회 실패: {}", e)) })?;
         
         let new_revision = max_revision.unwrap_or(0) + 1;
+        debug!("📄 새 파일 정보 저장 준비: file_id={}, revision={} (key_id: {:?})", file_info.file_id, new_revision, file_info.key_id);
         
-        debug!("📊 revision 계산: max_revision={:?}, new_revision={}", 
-              max_revision, new_revision);
+        // Path encryption and index computation omitted as it's handled elsewhere
         
         debug!("🔍 활성 파일 확인 중...");
         // 동일한 파일 경로와 이름으로 삭제되지 않은 파일이 있는지 확인
@@ -180,8 +183,8 @@ impl MySqlFileExt for MySqlStorage {
             r#"INSERT INTO files (
                 file_id, account_hash, device_hash, file_path, filename, file_hash, size,
                 is_deleted, revision, created_time, updated_time, group_id, watcher_id,
-                server_group_id, server_watcher_id, eq_index, token_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?, ?, ?)"#
+                server_group_id, server_watcher_id, eq_index, token_path, key_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, FALSE, ?, FROM_UNIXTIME(?), FROM_UNIXTIME(?), ?, ?, ?, ?, ?, ?, ?)"#
         )
         .bind(file_info.file_id as i64)
         .bind(&file_info.account_hash)
@@ -199,6 +202,7 @@ impl MySqlFileExt for MySqlStorage {
         .bind(file_info.watcher_id)
         .bind(&eq_index)
         .bind(&token_path)
+        .bind(file_info.key_id.as_deref())
         .execute(&mut *tx)
         .await
         .map_err(|e| { error!("❌ 새 파일 정보 삽입 실패(sqlx): {}", e); StorageError::Database(format!("새 파일 정보 삽입 실패: {}", e)) })?;
@@ -220,7 +224,7 @@ impl MySqlFileExt for MySqlStorage {
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
                     UNIX_TIMESTAMP(created_time) AS created_ts,
                     UNIX_TIMESTAMP(updated_time) AS updated_ts,
-                    group_id, watcher_id, is_deleted, revision, size
+                    group_id, watcher_id, is_deleted, revision, size, key_id
                FROM files 
                WHERE file_id = ? AND is_deleted = FALSE"#
         )
@@ -241,6 +245,7 @@ impl MySqlFileExt for MySqlStorage {
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
 
@@ -257,6 +262,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash,
                 size,
+                key_id: key_id_opt,
             };
             debug!("파일 정보 조회 성공: file_id={}", file_id);
             Ok(Some(file_info))
@@ -276,7 +282,7 @@ impl MySqlFileExt for MySqlStorage {
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
                     UNIX_TIMESTAMP(created_time) AS created_ts,
                     UNIX_TIMESTAMP(updated_time) AS updated_ts,
-                    group_id, watcher_id, is_deleted, revision, size
+                    group_id, watcher_id, is_deleted, revision, size, key_id
                FROM files 
                WHERE file_id = ?"#
         )
@@ -298,6 +304,7 @@ impl MySqlFileExt for MySqlStorage {
             let is_deleted: bool = row.try_get("is_deleted").unwrap_or(false);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
 
@@ -314,6 +321,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash,
                 size,
+                key_id: key_id_opt,
             };
             debug!("파일 정보 조회 성공 (삭제 포함): file_id={}, is_deleted={}", file_id, is_deleted);
             Ok(Some((file_info, is_deleted)))
@@ -343,7 +351,7 @@ impl MySqlFileExt for MySqlStorage {
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
                     UNIX_TIMESTAMP(created_time) AS created_ts,
                     UNIX_TIMESTAMP(updated_time) AS updated_ts,
-                    group_id, watcher_id, revision, size
+                    group_id, watcher_id, revision, size, key_id
                FROM files 
                WHERE account_hash = ? AND eq_index = ? AND server_group_id = ? AND is_deleted = FALSE
                ORDER BY revision DESC LIMIT 1"#
@@ -367,6 +375,7 @@ impl MySqlFileExt for MySqlStorage {
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
 
@@ -383,6 +392,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash,
                 size,
+                key_id: key_id_opt,
             };
             debug!("경로로 파일 정보 조회 성공: file_id={}", file_id);
             Ok(Some(file_info))
@@ -402,7 +412,7 @@ impl MySqlFileExt for MySqlStorage {
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
                     UNIX_TIMESTAMP(created_time) AS created_ts,
                     UNIX_TIMESTAMP(updated_time) AS updated_ts,
-                    group_id, watcher_id, revision, size
+                    group_id, watcher_id, revision, size, key_id
                FROM files 
                WHERE account_hash = ? AND file_hash = ? AND is_deleted = FALSE
                ORDER BY revision DESC LIMIT 1"#
@@ -425,6 +435,7 @@ impl MySqlFileExt for MySqlStorage {
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
 
@@ -441,6 +452,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash,
                 size,
+                key_id: key_id_opt,
             };
             debug!("해시로 파일 검색 성공: file_id={}", file_id);
             Ok(Some(file_info))
@@ -471,7 +483,7 @@ impl MySqlFileExt for MySqlStorage {
                         file_id, account_hash, device_hash, file_path, filename, file_hash,
                         UNIX_TIMESTAMP(created_time) as created_ts,
                         UNIX_TIMESTAMP(updated_time) as updated_ts,
-                        group_id, watcher_id, revision, size
+                        group_id, watcher_id, revision, size, key_id
                    FROM files 
                    WHERE account_hash = ? AND eq_index = ? AND is_deleted = FALSE AND revision = ?
                    ORDER BY revision DESC LIMIT 1"#
@@ -488,7 +500,7 @@ impl MySqlFileExt for MySqlStorage {
                         file_id, account_hash, device_hash, file_path, filename, file_hash,
                         UNIX_TIMESTAMP(created_time) as created_ts,
                         UNIX_TIMESTAMP(updated_time) as updated_ts,
-                        group_id, watcher_id, revision, size
+                        group_id, watcher_id, revision, size, key_id
                    FROM files 
                    WHERE account_hash = ? AND eq_index = ? AND is_deleted = FALSE
                    ORDER BY revision DESC LIMIT 1"#
@@ -512,6 +524,7 @@ impl MySqlFileExt for MySqlStorage {
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
 
             let file_path = self.decrypt_text(&acc_hash, group_id, watcher_id, file_path_b);
             let filename = self.decrypt_text(&acc_hash, group_id, watcher_id, filename_b);
@@ -531,6 +544,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash: acc_hash,
                 size,
+                key_id: key_id_opt,
             };
             debug!("경로/파일명으로 파일 검색 성공: file_id={}", file_id);
             Ok(Some(file_info))
@@ -650,7 +664,7 @@ impl MySqlFileExt for MySqlStorage {
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
                     UNIX_TIMESTAMP(created_time) AS created_ts,
                     UNIX_TIMESTAMP(updated_time) AS updated_ts,
-                    group_id, watcher_id, revision, size
+                    group_id, watcher_id, revision, size, key_id
                FROM files 
                WHERE account_hash = ? AND server_group_id = ? AND is_deleted = FALSE
                ORDER BY updated_time DESC"#
@@ -674,6 +688,7 @@ impl MySqlFileExt for MySqlStorage {
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
             files.push(FileInfo {
@@ -689,6 +704,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash: acc_hash,
                 size,
+                key_id: key_id_opt,
             });
         }
         info!("파일 {} 개를 찾았습니다: account_hash={}, group_id={}", files.len(), account_hash, group_id);
@@ -705,7 +721,7 @@ impl MySqlFileExt for MySqlStorage {
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
                     UNIX_TIMESTAMP(created_time) AS created_ts,
                     UNIX_TIMESTAMP(updated_time) AS updated_ts,
-                    group_id, watcher_id, revision, size
+                    group_id, watcher_id, revision, size, key_id
                FROM files 
                WHERE account_hash = ? AND server_group_id = ? AND device_hash <> ? AND is_deleted = FALSE
                ORDER BY updated_time DESC"#
@@ -730,6 +746,7 @@ impl MySqlFileExt for MySqlStorage {
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
 
             let timestamp = prost_types::Timestamp { seconds: updated_ts.unwrap_or(0), nanos: 0 };
             files.push(FileInfo {
@@ -745,6 +762,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash: acc_hash,
                 size,
+                key_id: key_id_opt,
             });
         }
         Ok(files)
@@ -893,7 +911,7 @@ impl MySqlFileExt for MySqlStorage {
                     file_id, account_hash, device_hash, file_path, filename, file_hash,
                     UNIX_TIMESTAMP(created_time) as created_ts,
                     UNIX_TIMESTAMP(updated_time) as updated_ts,
-                    group_id, watcher_id, revision, size
+                    group_id, watcher_id, revision, size, key_id
                FROM files 
                WHERE account_hash = ? AND server_group_id = ? AND server_watcher_id = ? AND is_deleted = FALSE
                  AND (
@@ -928,6 +946,7 @@ impl MySqlFileExt for MySqlStorage {
             let watcher_id: i32 = row.try_get("watcher_id").unwrap_or(0);
             let revision: i64 = row.try_get("revision").unwrap_or(0);
             let size: u64 = row.try_get("size").unwrap_or(0);
+            let key_id_opt: Option<String> = row.try_get("key_id").ok();
             
             info!("✅ find_file_by_criteria 결과: file_id={}, filename={}, watcher_id={}, revision={}", 
                    file_id, filename, watcher_id, revision);
@@ -949,6 +968,7 @@ impl MySqlFileExt for MySqlStorage {
                 revision,
                 account_hash: acc_hash,
                 size,
+                key_id: key_id_opt,
             };
             
             info!("✅ find_file_by_criteria 완료: file_id={}, revision={}", 

@@ -145,6 +145,7 @@ pub struct FileInfo {
     pub revision: i64,
     pub account_hash: String,
     pub size: u64,
+    pub key_id: Option<String>,
 }
 
 impl FileInfo {
@@ -193,6 +194,7 @@ impl From<sync::FileInfo> for FileInfo {
             revision: proto.revision,
             account_hash: String::new(),
             size: proto.file_size,
+            key_id: None,
         }
     }
 }

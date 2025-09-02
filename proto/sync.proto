@@ -363,6 +363,8 @@ message UploadFileRequest {
     int64 revision = 11;
     google.protobuf.Timestamp updated_time = 12;
     uint64 file_size = 13;
+
+    string key_id = 14;
 }
 
 message UploadFileResponse {
@@ -391,6 +393,8 @@ message DownloadFileResponse {
     bool is_encrypted = 6;
     string return_message = 7;
     google.protobuf.Timestamp updated_time = 8;
+    uint64 file_size = 9;
+    string key_id = 10;
 }
 
 message ListFilesRequest {

@@ -34,6 +34,8 @@ pub fn file_download_error(message: impl Into<String>) -> DownloadFileResponse {
         filename: String::new(),
         file_path: String::new(),
         updated_time: None,
+        file_size: 0,
+        key_id: String::new(),
     }
 }
 

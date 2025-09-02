@@ -108,8 +108,17 @@ impl AppState {
     async fn initialize_storage(url: &str) -> Result<Arc<dyn Storage>, AppError> {
         if url.starts_with("mysql://") {
             info!("Using MySQL storage");
+            info!("MySQL URL: {}", url);
             match MySqlStorage::new_with_url(url).await {
                 Ok(storage) => {
+                    // Log target database name via a simple query
+                    match sqlx::query_scalar::<_, String>("SELECT DATABASE()")
+                        .fetch_optional(storage.get_sqlx_pool())
+                        .await {
+                        Ok(Some(db)) => info!("Connected to database: {}", db),
+                        Ok(None) => info!("Connected to database: <unknown>"),
+                        Err(e) => warn!("Failed to retrieve current database name: {}", e),
+                    }
                     if let Err(e) = storage.init_schema().await {
                         error!("Failed to initialize MySQL schema: {}", e);
                         return Err(AppError::Storage(format!("Failed to initialize MySQL schema: {}", e)));

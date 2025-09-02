@@ -102,6 +102,7 @@ impl VersionServiceImpl {
             watcher_id: file.watcher_id,
             revision: file.revision,
             is_encrypted: file.is_encrypted,
+            key_id: None,
         }
     }
 

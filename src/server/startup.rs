@@ -45,6 +45,15 @@ pub async fn start_server(config: ServerConfig) -> Result<()> {
     
     // Print startup banner
     print_startup_banner(&config);
+    // Log effective storage configuration
+    if let Some(storage_path) = &config.storage_path {
+        tracing::info!("Effective storage_path: {}", storage_path);
+    } else {
+        tracing::info!("Effective storage_path: <none> (memory fallback if not set)");
+    }
+    tracing::info!("Features: dev_mode={}, test_mode={}",
+        std::env::var("COSMIC_SYNC_DEV_MODE").unwrap_or_default(),
+        std::env::var("COSMIC_SYNC_TEST_MODE").unwrap_or_default());
     
     // Run servers with graceful shutdown
     tokio::select! {

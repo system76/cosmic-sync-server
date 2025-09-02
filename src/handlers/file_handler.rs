@@ -51,28 +51,27 @@ impl FileHandler {
         info!("   watcher_id: {}", req.watcher_id);
         info!("   file_path: {}", req.file_path);
         info!("   file_data length: {} bytes", req.file_data.len());
+        let key_id_log = if req.key_id.is_empty() { "<empty>" } else { "<present>" };
+        info!("   is_encrypted: {}, key_id: {}", req.is_encrypted, key_id_log);
     }
     
     /// Validate upload input
     pub(crate) fn validate_upload_input(&self, req: &UploadFileRequest) -> Result<(), String> {
-        debug!("Validating input data...");
-        
-        if req.account_hash.is_empty() {
-            error!("account_hash is empty");
-            return Err("Account hash is required".to_string());
+        if req.account_hash.is_empty() || req.device_hash.is_empty() || req.file_hash.is_empty() {
+            return Err("Missing required fields: account_hash/device_hash/file_hash".to_string());
         }
-
-        if req.filename.is_empty() {
-            error!("filename is empty");
-            return Err("Filename is required".to_string());
+        if req.group_id <= 0 || req.watcher_id <= 0 {
+            return Err("Invalid group_id/watcher_id".to_string());
         }
-
-        if req.file_hash.is_empty() {
-            error!("file_hash is empty");
-            return Err("File hash is required".to_string());
+        if req.filename.trim().is_empty() || req.file_path.trim().is_empty() {
+            return Err("filename/file_path must not be empty".to_string());
         }
-        
-        debug!("Input validation complete");
+        if req.is_encrypted && req.key_id.trim().is_empty() {
+            return Err("key_id is required when is_encrypted is true".to_string());
+        }
+        if !req.is_encrypted && !req.key_id.trim().is_empty() {
+            return Err("key_id must be empty when is_encrypted is false".to_string());
+        }
         Ok(())
     }
     

@@ -138,8 +138,8 @@ impl Component for SyncServerComponent {
         
         // Start client cleanup task
         self.app_state.start_client_cleanup_task();
-        // Start retention cleanup task
-        self.app_state.start_retention_cleanup_task();
+        // Retention cleanup disabled (do not delete files on server start)
+        // self.app_state.start_retention_cleanup_task();
 
         // Optional: run one-time migration for encrypting existing paths
         {
