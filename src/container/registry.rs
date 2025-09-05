@@ -24,8 +24,8 @@ impl ServiceRegistry {
         }
     }
 
-    /// 서비스 인스턴스 등록
-    pub async fn register<T: Send + Sync + 'static>(&self, service: T) {
+    /// 서비스 인스턴스 등록 (항상 Arc<T>로 저장하며, 키는 T의 TypeId)
+    pub async fn register<T: Send + Sync + 'static>(&self, service: Arc<T>) {
         let type_id = TypeId::of::<T>();
         let mut services = self.services.write().await;
         services.insert(type_id, Box::new(service));

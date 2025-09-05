@@ -52,8 +52,13 @@ impl ContainerBuilder {
             info!("📊 Using provided storage instance");
             storage.clone()
         } else {
-            info!("📊 Initializing storage from configuration");
-            init_storage(&config.database).await?
+            if cfg!(test) || config.features.test_mode {
+                info!("📊 Using in-memory storage (test mode)");
+                Arc::new(crate::storage::memory::MemoryStorage::new()) as Arc<dyn Storage>
+            } else {
+                info!("📊 Initializing storage from configuration");
+                init_storage(&config.database).await?
+            }
         };
 
         // 서비스들 초기화 (기존 로직 유지)
