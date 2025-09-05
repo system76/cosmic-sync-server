@@ -150,7 +150,8 @@ impl ContainerBuilder {
                 test_mode: true,
                 debug_mode: true,
                 ..Default::default()
-            },
+            message_broker: crate::config::settings::MessageBrokerConfig::default(),
+            server_encode_key: None,
         };
 
         let storage = Arc::new(crate::storage::memory::MemoryStorage::new());
