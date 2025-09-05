@@ -273,17 +273,59 @@ impl AppState {
             struct SimpleInMemoryFileStorage;
             #[async_trait::async_trait]
             impl crate::storage::FileStorage for SimpleInMemoryFileStorage {
-                async fn store_file_data(&self, _file_id: u64, _data: Vec<u8>) -> crate::storage::Result<String> { Ok("mem".to_string()) }
-                async fn store_file_data_with_options(&self, file_id: u64, data: Vec<u8>, _compress: bool) -> crate::storage::Result<String> { self.store_file_data(file_id, data).await }
-                async fn get_file_data(&self, _file_id: u64) -> crate::storage::Result<Option<Vec<u8>>> { Ok(None) }
-                async fn delete_file_data(&self, _file_id: u64) -> crate::storage::Result<()> { Ok(()) }
-                async fn batch_delete_file_data(&self, file_ids: Vec<u64>) -> crate::storage::Result<Vec<(u64, bool)>> { Ok(file_ids.into_iter().map(|id| (id, true)).collect()) }
-                async fn file_data_exists(&self, _file_id: u64) -> crate::storage::Result<bool> { Ok(false) }
-                async fn get_file_size(&self, _file_id: u64) -> crate::storage::Result<Option<u64>> { Ok(None) }
-                async fn health_check(&self) -> crate::storage::Result<()> { Ok(()) }
-                async fn get_metrics(&self) -> crate::storage::Result<crate::storage::StorageMetrics> { Ok(crate::storage::StorageMetrics::default()) }
-                fn storage_type(&self) -> &'static str { "memory" }
-                async fn cleanup_orphaned_data(&self) -> crate::storage::Result<u64> { Ok(0) }
+                async fn store_file_data(
+                    &self,
+                    _file_id: u64,
+                    _data: Vec<u8>,
+                ) -> crate::storage::Result<String> {
+                    Ok("mem".to_string())
+                }
+                async fn store_file_data_with_options(
+                    &self,
+                    file_id: u64,
+                    data: Vec<u8>,
+                    _compress: bool,
+                ) -> crate::storage::Result<String> {
+                    self.store_file_data(file_id, data).await
+                }
+                async fn get_file_data(
+                    &self,
+                    _file_id: u64,
+                ) -> crate::storage::Result<Option<Vec<u8>>> {
+                    Ok(None)
+                }
+                async fn delete_file_data(&self, _file_id: u64) -> crate::storage::Result<()> {
+                    Ok(())
+                }
+                async fn batch_delete_file_data(
+                    &self,
+                    file_ids: Vec<u64>,
+                ) -> crate::storage::Result<Vec<(u64, bool)>> {
+                    Ok(file_ids.into_iter().map(|id| (id, true)).collect())
+                }
+                async fn file_data_exists(&self, _file_id: u64) -> crate::storage::Result<bool> {
+                    Ok(false)
+                }
+                async fn get_file_size(
+                    &self,
+                    _file_id: u64,
+                ) -> crate::storage::Result<Option<u64>> {
+                    Ok(None)
+                }
+                async fn health_check(&self) -> crate::storage::Result<()> {
+                    Ok(())
+                }
+                async fn get_metrics(
+                    &self,
+                ) -> crate::storage::Result<crate::storage::StorageMetrics> {
+                    Ok(crate::storage::StorageMetrics::default())
+                }
+                fn storage_type(&self) -> &'static str {
+                    "memory"
+                }
+                async fn cleanup_orphaned_data(&self) -> crate::storage::Result<u64> {
+                    Ok(0)
+                }
             }
             return Ok(Arc::new(SimpleInMemoryFileStorage));
         }
