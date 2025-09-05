@@ -46,7 +46,16 @@ impl DeviceHandler {
         info!("device registration request: account_hash={}, device_hash={}, os_version={}, app_version={}",
              req.account_hash, req.device_hash, req.os_version, req.app_version);
 
-        // Input validation (device_hash만 필수)
+        // Input validation
+        if req.account_hash.is_empty() {
+            return Ok(Response::new(RegisterDeviceResponse {
+                success: false,
+                device_hash: String::new(),
+                return_message: "Account hash cannot be empty".to_string(),
+            }));
+        }
+
+        // device_hash 필수
         if req.device_hash.is_empty() {
             return Ok(Response::new(RegisterDeviceResponse {
                 success: false,
