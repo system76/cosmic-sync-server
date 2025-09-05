@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::mysql::MySqlPoolOptions;
-use sqlx::{MySqlPool, Error as SqlxError};
+use sqlx::{Error as SqlxError, MySqlPool};
 
 /// Database connection pool configuration
 #[derive(Debug, Clone)]
@@ -107,4 +107,4 @@ impl PoolStats {
             (self.size as f64 / self.max_connections as f64) * 100.0
         }
     }
-} 
+}

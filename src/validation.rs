@@ -22,7 +22,7 @@ impl ValidationResult {
             errors: Vec::new(),
         }
     }
-    
+
     pub fn add_error(&mut self, field: String, message: String) {
         self.is_valid = false;
         self.errors.push(ValidationError { field, message });
@@ -52,4 +52,4 @@ pub fn validate_device_hash(hash: &str) -> bool {
 /// Validates account hash format
 pub fn validate_account_hash(hash: &str) -> bool {
     validate_hash(hash)
-} 
+}

@@ -1,12 +1,12 @@
+use crate::{
+    config::settings::Config,
+    container::AppContainer,
+    error::Result,
+    services::{AuthService, DeviceService, EncryptionService, FileService},
+    storage::{init_storage, Storage},
+};
 use std::sync::Arc;
 use tracing::{info, instrument};
-use crate::{
-    storage::{Storage, init_storage},
-    services::{AuthService, DeviceService, FileService, EncryptionService},
-    config::settings::Config,
-    error::Result,
-    container::AppContainer,
-};
 
 /// 의존성 주입 컨테이너 빌더
 /// 기존 초기화 로직을 유지하면서 점진적으로 개선
@@ -74,7 +74,11 @@ impl ContainerBuilder {
 
     /// 서비스들을 초기화하는 내부 메서드
     #[instrument(skip(self, storage, config))]
-    async fn build_services(&self, storage: &Arc<dyn Storage>, config: &Arc<Config>) -> Result<Services> {
+    async fn build_services(
+        &self,
+        storage: &Arc<dyn Storage>,
+        config: &Arc<Config>,
+    ) -> Result<Services> {
         info!("🔧 Initializing application services");
 
         // 각 서비스를 의존성과 함께 초기화
@@ -114,10 +118,10 @@ impl ContainerBuilder {
     #[cfg(debug_assertions)]
     pub async fn build_dev() -> Result<AppContainer> {
         info!("🔧 Building development container with memory storage");
-        
+
         let config = Config::load();
         let storage = Arc::new(crate::storage::memory::MemoryStorage::new());
-        
+
         Self::new()
             .with_config(config)
             .with_storage(storage)
@@ -128,13 +132,10 @@ impl ContainerBuilder {
     /// 프로덕션 환경용 컨테이너
     pub async fn build_production() -> Result<AppContainer> {
         info!("🔧 Building production container");
-        
+
         let config = Config::load();
-        
-        Self::new()
-            .with_config(config)
-            .build()
-            .await
+
+        Self::new().with_config(config).build().await
     }
 
     /// 테스트용 컨테이너
@@ -151,9 +152,9 @@ impl ContainerBuilder {
                 ..Default::default()
             },
         };
-        
+
         let storage = Arc::new(crate::storage::memory::MemoryStorage::new());
-        
+
         Self::new()
             .with_config(config)
             .with_storage(storage)
@@ -169,10 +170,10 @@ mod tests {
     #[tokio::test]
     async fn test_container_builder() {
         let container = ContainerBuilder::build_test().await.unwrap();
-        
+
         // 서비스들이 올바르게 초기화되었는지 확인
         assert!(container.health_check().await.unwrap());
-        
+
         // 서비스 접근 테스트
         let _auth_service = container.auth_service();
         let _device_service = container.device_service();
@@ -180,7 +181,7 @@ mod tests {
         // watcher_service is not available; ensure other services are accessible.
         let _encryption_service = container.encryption_service();
         let _config = container.config();
-        
+
         // 정리
         container.shutdown().await.unwrap();
     }
@@ -189,15 +190,15 @@ mod tests {
     async fn test_builder_with_custom_config() {
         let mut config = Config::default();
         config.features.test_mode = true;
-        
+
         let container = ContainerBuilder::new()
             .with_config(config)
             .build()
             .await
             .unwrap();
-        
+
         assert!(container.config().features.test_mode);
-        
+
         container.shutdown().await.unwrap();
     }
 }

@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use serde::{Serialize, Deserialize};
 
 /// Main configuration container for the application
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ impl Config {
             server_encode_key: None,
         }
     }
-    
+
     /// Load configuration asynchronously with AWS Secrets Manager support
     pub async fn load_async() -> Result<Self, Box<dyn std::error::Error>> {
         let loader = super::secrets::ConfigLoader::new().await?;
@@ -97,7 +97,8 @@ impl Default for ServerConfig {
 impl ServerConfig {
     /// Load configuration from environment variables or use defaults
     pub fn load() -> Self {
-        let host = env::var("SERVER_HOST").unwrap_or_else(|_| crate::config::constants::DEFAULT_GRPC_HOST.to_string());
+        let host = env::var("SERVER_HOST")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_GRPC_HOST.to_string());
         let port = env::var("GRPC_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
@@ -123,7 +124,7 @@ impl ServerConfig {
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_HEARTBEAT_INTERVAL_SECS);
-        
+
         Self {
             host,
             port,
@@ -135,16 +136,19 @@ impl ServerConfig {
             heartbeat_interval_secs,
         }
     }
-    
+
     /// Get socket address from host and port
     pub fn address(&self) -> Result<SocketAddr, std::io::Error> {
-        format!("{}:{}", self.host, self.port).parse::<SocketAddr>()
+        format!("{}:{}", self.host, self.port)
+            .parse::<SocketAddr>()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
     }
-    
+
     /// Get storage path as PathBuf
     pub fn storage_path_buf(&self) -> PathBuf {
-        self.storage_path.as_ref().map_or_else(|| PathBuf::new(), PathBuf::from)
+        self.storage_path
+            .as_ref()
+            .map_or_else(|| PathBuf::new(), PathBuf::from)
     }
 }
 
@@ -187,10 +191,14 @@ impl Default for DatabaseConfig {
 impl DatabaseConfig {
     /// Load database configuration from environment variables or use defaults
     pub fn load() -> Self {
-        let user = env::var("DB_USER").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_USER.to_string());
-        let password = env::var("DB_PASS").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_PASS.to_string());
-        let name = env::var("DB_NAME").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_NAME.to_string());
-        let host = env::var("DB_HOST").unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_HOST.to_string());
+        let user = env::var("DB_USER")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_USER.to_string());
+        let password = env::var("DB_PASS")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_PASS.to_string());
+        let name = env::var("DB_NAME")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_NAME.to_string());
+        let host = env::var("DB_HOST")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_DB_HOST.to_string());
         let port = env::var("DB_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
@@ -206,7 +214,7 @@ impl DatabaseConfig {
         let log_queries = env::var("DATABASE_LOG_QUERIES")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(crate::config::constants::DEFAULT_DB_LOG_QUERIES);
-            
+
         Self {
             user,
             password,
@@ -218,7 +226,7 @@ impl DatabaseConfig {
             log_queries,
         }
     }
-    
+
     /// Generate database URL from individual components
     pub fn url(&self) -> String {
         format!(
@@ -261,11 +269,13 @@ impl Default for LoggingConfig {
 impl LoggingConfig {
     /// Load logging configuration from environment variables or use defaults
     pub fn load() -> Self {
-        let level = env::var("LOG_LEVEL").unwrap_or_else(|_| crate::config::constants::DEFAULT_LOG_LEVEL.to_string());
+        let level = env::var("LOG_LEVEL")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_LOG_LEVEL.to_string());
         let file_logging = env::var("LOG_TO_FILE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(crate::config::constants::DEFAULT_LOG_TO_FILE);
-        let log_file = env::var("LOG_FILE").unwrap_or_else(|_| crate::config::constants::DEFAULT_LOG_FILE.to_string());
+        let log_file = env::var("LOG_FILE")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_LOG_FILE.to_string());
         let max_file_size = env::var("LOG_MAX_FILE_SIZE")
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
@@ -275,7 +285,7 @@ impl LoggingConfig {
             .and_then(|b| b.parse::<usize>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_LOG_MAX_BACKUPS);
         let format = env::var("LOG_FORMAT").unwrap_or_else(|_| "text".to_string());
-            
+
         Self {
             level,
             file_logging,
@@ -344,7 +354,7 @@ impl FeatureFlags {
         let dev_mode = env::var("COSMIC_SYNC_DEV_MODE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
-        
+
         Self {
             test_mode,
             debug_mode,
@@ -355,7 +365,7 @@ impl FeatureFlags {
             dev_mode,
         }
     }
-} 
+}
 
 /// Storage type enumeration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -364,7 +374,6 @@ pub enum StorageType {
     Database,
     /// Store files in AWS S3
     S3,
-
 }
 
 impl Default for StorageType {
@@ -375,7 +384,7 @@ impl Default for StorageType {
 
 impl std::str::FromStr for StorageType {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "database" | "db" => Ok(StorageType::Database),
@@ -417,12 +426,18 @@ impl StorageConfig {
             .unwrap_or_else(|_| "database".to_string())
             .parse()
             .unwrap_or(StorageType::Database);
-            
+
         Self {
             storage_type,
             s3: S3Config::load(),
-            file_ttl_secs: env::var("FILE_TTL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(crate::config::constants::DEFAULT_FILE_TTL_SECS),
-            max_file_revisions: env::var("MAX_FILE_REVISIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(crate::config::constants::DEFAULT_MAX_FILE_REVISIONS),
+            file_ttl_secs: env::var("FILE_TTL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(crate::config::constants::DEFAULT_FILE_TTL_SECS),
+            max_file_revisions: env::var("MAX_FILE_REVISIONS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(crate::config::constants::DEFAULT_MAX_FILE_REVISIONS),
         }
     }
 }
@@ -479,9 +494,12 @@ impl S3Config {
     /// Load S3 configuration from environment variables or use defaults
     pub fn load() -> Self {
         Self {
-            region: env::var("AWS_REGION").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_REGION.to_string()),
-            bucket: env::var("AWS_S3_BUCKET").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_BUCKET.to_string()),
-            key_prefix: env::var("S3_KEY_PREFIX").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string()),
+            region: env::var("AWS_REGION")
+                .unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_REGION.to_string()),
+            bucket: env::var("AWS_S3_BUCKET")
+                .unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_BUCKET.to_string()),
+            key_prefix: env::var("S3_KEY_PREFIX")
+                .unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string()),
             access_key_id: env::var("AWS_ACCESS_KEY_ID").ok(),
             secret_access_key: env::var("AWS_SECRET_ACCESS_KEY").ok(),
             session_token: env::var("AWS_SESSION_TOKEN").ok(),
@@ -526,20 +544,30 @@ impl Default for MessageBrokerConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            url: env::var("RABBITMQ_URL").unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".to_string()),
+            url: env::var("RABBITMQ_URL")
+                .unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".to_string()),
             exchange: env::var("RABBITMQ_EXCHANGE").unwrap_or_else(|_| "cosmic.sync".to_string()),
-            queue_prefix: env::var("RABBITMQ_QUEUE_PREFIX").unwrap_or_else(|_| "cosmic.sync".to_string()),
-            prefetch: env::var("RABBITMQ_PREFETCH").ok().and_then(|v| v.parse::<u16>().ok()).unwrap_or(200),
-            durable: env::var("RABBITMQ_DURABLE").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true),
+            queue_prefix: env::var("RABBITMQ_QUEUE_PREFIX")
+                .unwrap_or_else(|_| "cosmic.sync".to_string()),
+            prefetch: env::var("RABBITMQ_PREFETCH")
+                .ok()
+                .and_then(|v| v.parse::<u16>().ok())
+                .unwrap_or(200),
+            durable: env::var("RABBITMQ_DURABLE")
+                .map(|v| v == "1" || v.to_lowercase() == "true")
+                .unwrap_or(true),
         }
     }
 }
 
 impl MessageBrokerConfig {
     pub fn load() -> Self {
-        let enabled = env::var("RABBITMQ_ENABLED").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false);
-        Self { enabled, ..Self::default() }
+        let enabled = env::var("RABBITMQ_ENABLED")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+        Self {
+            enabled,
+            ..Self::default()
+        }
     }
 }
-
- 

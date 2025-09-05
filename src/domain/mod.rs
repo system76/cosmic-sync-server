@@ -2,17 +2,17 @@
 // 기존 models 모듈을 점진적으로 도메인 엔티티로 마이그레이션
 
 pub mod entities;
-pub mod services;
-pub mod repositories;
-pub mod value_objects;
 pub mod events;
+pub mod repositories;
+pub mod services;
+pub mod value_objects;
 
 // Re-export for convenience
 pub use entities::*;
-pub use services::*;
-pub use repositories::*;
-pub use value_objects::*;
 pub use events::*;
+pub use repositories::*;
+pub use services::*;
+pub use value_objects::*;
 
 use crate::error::Result;
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ use async_trait::async_trait;
 pub trait DomainService: Send + Sync {
     /// 서비스 이름
     fn name(&self) -> &'static str;
-    
+
     /// 서비스 헬스체크
     async fn health_check(&self) -> Result<bool>;
 }
@@ -38,10 +38,10 @@ pub trait DomainEventHandler<T: DomainEvent>: Send + Sync {
 pub trait DomainEvent: Send + Sync + Clone {
     /// 이벤트 타입
     fn event_type(&self) -> &'static str;
-    
+
     /// 이벤트 발생 시간
     fn timestamp(&self) -> i64;
-    
+
     /// 이벤트 ID
     fn event_id(&self) -> String;
 }
@@ -49,10 +49,10 @@ pub trait DomainEvent: Send + Sync + Clone {
 /// 도메인 엔티티 기본 트레이트
 pub trait Entity: Send + Sync + Clone {
     type Id: Clone + PartialEq + Send + Sync;
-    
+
     /// 엔티티 ID
     fn id(&self) -> &Self::Id;
-    
+
     /// 엔티티 검증
     fn validate(&self) -> Result<()>;
 }
@@ -60,10 +60,10 @@ pub trait Entity: Send + Sync + Clone {
 /// 애그리게이트 루트 트레이트
 pub trait AggregateRoot: Entity {
     type Event: DomainEvent;
-    
+
     /// 도메인 이벤트 가져오기
     fn events(&self) -> Vec<Self::Event>;
-    
+
     /// 도메인 이벤트 지우기
     fn clear_events(&mut self);
 }
@@ -79,13 +79,13 @@ pub trait ValueObject: Clone + PartialEq + Send + Sync {
 pub trait Repository<T: Entity>: Send + Sync {
     /// 엔티티 저장
     async fn save(&self, entity: &T) -> Result<()>;
-    
+
     /// ID로 엔티티 조회
     async fn find_by_id(&self, id: &T::Id) -> Result<Option<T>>;
-    
+
     /// 엔티티 삭제
     async fn delete(&self, id: &T::Id) -> Result<()>;
-    
+
     /// 모든 엔티티 조회
     async fn find_all(&self) -> Result<Vec<T>>;
 }
