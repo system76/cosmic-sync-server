@@ -8,6 +8,10 @@ on:
   push:
     branches: ["!main", "!staging"]
 
+permissions:
+  contents: read
+  statuses: write
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -138,13 +142,17 @@ jobs:
     steps:
       - name: Mark build expected as passed
         run: echo "All required checks completed"
-      - name: Explicit commit status (BuildExpected)
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Report commit status (BuildExpected)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
-            --method POST \
-            --field state=success \
-            --field context=BuildExpected \
-            --field description="CI checks passed"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}";
+          else
+            SHA="${{ github.sha }}";
+          fi
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/statuses/$SHA \
+            -d '{"state":"success","context":"BuildExpected","description":"CI checks passed"}'
