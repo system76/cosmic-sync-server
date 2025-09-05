@@ -4,14 +4,13 @@ name: Continuous Integration
 
 on:
   pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
+    types: [opened, reopened, synchronize]
   push:
-    branches:
-      - "!main"
-      - "!staging"
+    branches: ["!main", "!staging"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   Test:
@@ -134,13 +133,8 @@ jobs:
 
   BuildExpected:
     name: BuildExpected
+    needs: [Test, Format, Clippy]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Quick Build (no-op)
-        run: |
-          echo "Satisfy required status check: BuildExpected"
-          cargo --version
+      - name: Mark build expected as passed
+        run: echo "All required checks completed"
