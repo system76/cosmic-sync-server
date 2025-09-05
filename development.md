@@ -4,8 +4,8 @@ This document distills project-wide development knowledge that helps LLMs implem
 
 ### Build, Run, Tooling
 - Build (preferred):
-  - `sudo -E /home/yongjinchong/.cargo/bin/cargo lbuild` (reduced error output; shows errors first)
-  - `sudo -E /home/yongjinchong/.cargo/bin/cargo build`
+  - `cargo lbuild` (reduced error output; shows errors first)
+  - `cargo build`
 - Run server:
   - `./target/debug/cosmic-sync-server` (gRPC + HTTP)
 - Default servers:
@@ -174,7 +174,7 @@ This guide is designed for LLM agents to make safe, incremental edits without re
   - Subscribes to `file.*.#`, `version.*.#`, `device.*.#`, `watcher.*.update.#`
   - Declares DLX (`<exchange>.dlx`), durable queues, retry queues (TTL), and DLQ
   - Simple idempotency via in-process cache (consider Redis/MySQL for production)
-  - Run: `sudo -E /home/yongjinchong/.cargo/bin/cargo run --bin rabbit_consumer`
+  - Run: `cargo run --bin rabbit_consumer`
 
 ### Centralized Constants and Settings
 - Central constants: `src/config/constants.rs` (ports, HTTP keepalive, DB/S3 defaults, etc.)
@@ -190,8 +190,8 @@ This guide is designed for LLM agents to make safe, incremental edits without re
   - Examples: `tests/device_handler_integration.rs`, `tests/grpc_auth_status.rs`
 - Unit tests may remain inline with `#[cfg(test)]` in modules
 - Running:
-  - `sudo -E /home/yongjinchong/.cargo/bin/cargo test --no-run` (compile)
-  - `sudo -E /home/yongjinchong/.cargo/bin/cargo test` (execute)
+  - `cargo test --no-run` (compile)
+  - `cargo test` (execute)
 
 ### Performance Optimizations
 - S3 client lazy init: `tokio::sync::OnceCell` in `src/storage/file_storage.rs`
@@ -203,12 +203,12 @@ This guide is designed for LLM agents to make safe, incremental edits without re
 
 ### Quick Runbook (updated)
 - Build (prefer lbuild):
-  - `sudo -E /home/yongjinchong/.cargo/bin/cargo lbuild`
+  - `cargo lbuild`
 - Run server (debug):
   - `./target/debug/cosmic-sync-server`
 - Run consumer (debug):
   - Set `MESSAGE_BROKER_ENABLED=1` and broker env vars
-  - `sudo -E /home/yongjinchong/.cargo/bin/cargo run --bin rabbit_consumer`
+  - `cargo run --bin rabbit_consumer`
 
 ### Pitfalls and Conventions (event-driven)
 - Do not publish from service layer; consolidate side effects in handlers

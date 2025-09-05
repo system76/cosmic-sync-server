@@ -68,10 +68,10 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Build
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo build --verbose
+        run: cargo build --verbose
 
       - name: Test
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo test --verbose
+        run: cargo test --verbose
         env:
           DATABASE_URL: mysql://root:cosmic_sync@localhost:3306/cosmic_sync_test
           REDIS_URL: redis://localhost:6379
@@ -94,7 +94,7 @@ jobs:
           components: rustfmt
 
       - name: Format Check
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo fmt --check
+        run: cargo fmt --check
 
   Clippy:
     runs-on: ubuntu-latest
@@ -130,4 +130,4 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Clippy
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo clippy -- -D warnings 
+        run: cargo clippy -- -D warnings 

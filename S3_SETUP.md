@@ -77,7 +77,7 @@ S3 버킷에 대해 다음 권한이 필요합니다:
 환경 변수를 설정한 후 서버를 실행:
 
 ```bash
-sudo -E /home/yongjinchong/.cargo/bin/cargo run --bin cosmic-sync-server
+cargo run --bin cosmic-sync-server
 ```
 
 ## 문제 해결
