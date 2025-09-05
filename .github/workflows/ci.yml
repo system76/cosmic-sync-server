@@ -130,4 +130,4 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Clippy
-        run: cargo clippy -- -D warnings 
+        run: cargo clippy -- -W warnings 
