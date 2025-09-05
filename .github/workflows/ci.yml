@@ -134,25 +134,3 @@ jobs:
 
       - name: Clippy
         run: cargo clippy -- -W warnings 
-
-  BuildExpected:
-    name: BuildExpected
-    needs: [Test, Format, Clippy]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Mark build expected as passed
-        run: echo "All required checks completed"
-      - name: Report commit status (BuildExpected)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SHA="${{ github.event.pull_request.head.sha }}";
-          else
-            SHA="${{ github.sha }}";
-          fi
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/statuses/$SHA \
-            -d '{"state":"success","context":"BuildExpected","description":"CI checks passed"}'
