@@ -138,3 +138,13 @@ jobs:
     steps:
       - name: Mark build expected as passed
         run: echo "All required checks completed"
+      - name: Explicit commit status (BuildExpected)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            --method POST \
+            --field state=success \
+            --field context=BuildExpected \
+            --field description="CI checks passed"
