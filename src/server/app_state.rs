@@ -235,16 +235,11 @@ impl AppState {
         storage: Arc<dyn Storage>,
         config: &ServerConfig,
     ) -> Result<Self, AppError> {
-        // create simple Config object (reuse server config; others default)
-        let full_config = Config {
-            server: config.clone(),
-            database: crate::config::settings::DatabaseConfig::default(),
-            logging: crate::config::settings::LoggingConfig::default(),
-            features: crate::config::settings::FeatureFlags::default(),
-            storage: crate::config::settings::StorageConfig::default(),
-            message_broker: crate::config::settings::MessageBrokerConfig::load(),
-            server_encode_key: None,
-        };
+        // Load full config via async loader to respect Secrets Manager and unified keys
+        let mut full_config = crate::config::settings::Config::load_async()
+            .await
+            .unwrap_or_else(|_| crate::config::settings::Config::load());
+        full_config.server = config.clone();
 
         // initialize notification manager
         let notification_manager = Arc::new(NotificationManager::new_with_storage(storage.clone()));

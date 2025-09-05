@@ -41,7 +41,7 @@ AWS Secrets Manager를 사용하여 설정을 관리합니다.
 ```json
 {
   "DB_HOST": "staging-db.example.com",
-  "S3_BUCKET": "cosmic-sync-staging-files",
+  "AWS_S3_BUCKET": "cosmic-sync-staging-files",
   "OAUTH_CLIENT_ID": "cosmic-sync-staging",
   "LOG_LEVEL": "info"
 }
@@ -64,7 +64,7 @@ AWS Secrets Manager를 사용하여 설정을 관리합니다.
 ```json
 {
   "DB_HOST": "prod-db.example.com",
-  "S3_BUCKET": "cosmic-sync-production-files",
+  "AWS_S3_BUCKET": "cosmic-sync-production-files",
   "OAUTH_CLIENT_ID": "cosmic-sync-production",
   "LOG_LEVEL": "warn"
 }
@@ -91,8 +91,8 @@ Staging/Production 환경에서는 다음 IAM 권한이 필요합니다:
                 "secretsmanager:GetSecretValue"
             ],
             "Resource": [
-                "arn:aws:secretsmanager:us-east-2:*:secret:staging/so-dod/cosmic-sync/config-*",
-                "arn:aws:secretsmanager:us-east-2:*:secret:production/pop-os/cosmic-sync/config-*"
+                "arn:aws:secretsmanager:us-east-2:*:secret:staging/so-dod/cosmic-sync/config*",
+                "arn:aws:secretsmanager:us-east-2:*:secret:production/pop-os/cosmic-sync/config*"
             ]
         },
         {
@@ -152,12 +152,14 @@ ENV ENVIRONMENT=development
 ```dockerfile
 ENV ENVIRONMENT=staging
 ENV AWS_REGION=us-east-2
+ENV USE_AWS_SECRET_MANAGER=true
 ```
 
 ### Production
 ```dockerfile
 ENV ENVIRONMENT=production
 ENV AWS_REGION=us-east-2
+ENV USE_AWS_SECRET_MANAGER=true
 ```
 
 ## 🔍 로그 확인

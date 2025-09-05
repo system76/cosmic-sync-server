@@ -27,32 +27,56 @@ Create a `.env` file in the project root or copy the provided `.env.sample`:
 cp .env.sample .env
 ```
 
-Then edit the `.env` file to configure the following settings:
+Then edit the `.env` file to configure the following settings (keys unified):
 
 ```
-# Server configuration
+# Environment
+ENVIRONMENT=development
+
+# Server
 SERVER_HOST=0.0.0.0
-SERVER_PORT=50051
+GRPC_PORT=50051
 WORKER_THREADS=4
-
-# Authentication
 AUTH_TOKEN_EXPIRY_HOURS=24
-
-# Request limits
 MAX_CONCURRENT_REQUESTS=100
-MAX_FILE_SIZE=52428800  # 50MB in bytes
+MAX_FILE_SIZE=52428800
+HEARTBEAT_INTERVAL_SECS=10
 
-# Database configuration
-DATABASE_URL=mysql://username:password@localhost:3306/cosmic_sync
+# Database (MySQL)
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=cosmic_sync
+DB_USER=username
+DB_PASS=password
+DB_POOL=5
+DATABASE_CONNECTION_TIMEOUT=30
+DATABASE_LOG_QUERIES=false
 
-# Logging configuration
+# Storage
+STORAGE_TYPE=database  # or s3
+# STORAGE_PATH=/tmp/cosmic-sync
+
+# S3 (if STORAGE_TYPE=s3)
+AWS_REGION=us-east-2
+AWS_S3_BUCKET=cosmic-sync-files
+S3_KEY_PREFIX=files/
+# S3_ENDPOINT_URL=http://localhost:9000
+S3_FORCE_PATH_STYLE=true
+S3_TIMEOUT_SECONDS=30
+S3_MAX_RETRIES=3
+# AWS_ACCESS_KEY_ID=...
+# AWS_SECRET_ACCESS_KEY=...
+# AWS_SESSION_TOKEN=...
+
+# Logging
 LOG_LEVEL=info
 LOG_TO_FILE=true
 LOG_FILE=logs/cosmic-sync-server.log
-LOG_MAX_FILE_SIZE=10485760  # 10MB in bytes
+LOG_MAX_FILE_SIZE=10485760
 LOG_MAX_BACKUPS=5
+LOG_FORMAT=text  # json for production
 
-# OAuth configuration
+# OAuth
 OAUTH_CLIENT_ID=your_client_id
 OAUTH_CLIENT_SECRET=your_client_secret
 OAUTH_REDIRECT_URI=http://localhost:50051/oauth/callback
@@ -61,21 +85,22 @@ OAUTH_TOKEN_URL=https://oauth-provider.com/token
 OAUTH_USER_INFO_URL=https://oauth-provider.com/userinfo
 
 # Feature flags
-test_MODE=false
-DEBUG_MODE=false
-METRICS_ENABLED=true
+COSMIC_SYNC_DEV_MODE=false
+COSMIC_SYNC_TEST_MODE=false
+COSMIC_SYNC_DEBUG_MODE=false
+ENABLE_METRICS=false
 STORAGE_ENCRYPTION=true
+REQUEST_VALIDATION=true
 
-# Message broker (RabbitMQ)
-MESSAGE_BROKER_ENABLED=false
-MESSAGE_BROKER_URL=amqps://user:pass@host:5671/vhost
-MESSAGE_BROKER_EXCHANGE=cosmic.sync
-MESSAGE_BROKER_QUEUE_PREFIX=cosmic
-MESSAGE_BROKER_PREFETCH=64
-MESSAGE_BROKER_DURABLE=true
-# Consumer tuning (optional)
-RETRY_TTL_MS=5000
-MAX_RETRIES=3
+# RabbitMQ
+RABBITMQ_ENABLED=false
+RABBITMQ_URL=amqp://guest:guest@127.0.0.1:5672/%2f
+RABBITMQ_EXCHANGE=cosmic.sync
+RABBITMQ_QUEUE_PREFIX=cosmic.sync
+RABBITMQ_PREFETCH=200
+RABBITMQ_DURABLE=true
+# RETRY_TTL_MS=5000
+# MAX_RETRIES=3
 ```
 
 ### Database Preparation
@@ -109,10 +134,10 @@ To run the server with specific environment variables and debug options:
 
 ```bash
 # Run with development mode, debug mode, and debug logging
-RUST_LOG=debug sudo -E /home/yongjinchong/.cargo/bin/cargo run
+LOG_LEVEL=debug LOG_FORMAT=text sudo -E /home/yongjinchong/.cargo/bin/cargo run
 
 # Run the compiled binary directly with root privileges
-RUST_LOG=debug sudo -E ./target/debug/cosmic-sync-server
+LOG_LEVEL=debug LOG_FORMAT=text sudo -E ./target/debug/cosmic-sync-server
 ```
 
 ## Project Structure

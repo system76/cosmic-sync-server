@@ -277,10 +277,10 @@ impl ConfigLoader {
         use super::settings::S3Config;
 
         // Use infrastructure standard environment variable names
-        let region = self.get_config_value("AWS_S3_REGION", Some("us-west-2")).await
-            .unwrap_or_else(|| "us-west-2".to_string());
-        let bucket = self.get_config_value("AWS_S3_BUCKET", Some("cosmic-sync-files")).await
-            .unwrap_or_else(|| "cosmic-sync-files".to_string());
+        let region = self.get_config_value("AWS_REGION", Some(crate::config::constants::DEFAULT_S3_REGION)).await
+            .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_REGION.to_string());
+        let bucket = self.get_config_value("AWS_S3_BUCKET", Some(crate::config::constants::DEFAULT_S3_BUCKET)).await
+            .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_BUCKET.to_string());
         let key_prefix = self.get_config_value("S3_KEY_PREFIX", Some("files/")).await
             .unwrap_or_else(|| "files/".to_string());
         
@@ -293,7 +293,9 @@ impl ConfigLoader {
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
         
-        let use_secret_manager = self.environment.is_cloud();
+        let use_secret_manager = self.get_config_value("USE_AWS_SECRET_MANAGER", None).await
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(self.environment.is_cloud());
         let secret_name = self.get_secret_name();
         
         let timeout_seconds = self.get_config_value("S3_TIMEOUT_SECONDS", Some("30")).await
@@ -346,6 +348,10 @@ impl ConfigLoader {
             .and_then(|r| r.parse::<usize>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_MAX_CONCURRENT_REQUESTS);
 
+        let heartbeat_interval_secs = self.get_config_value("HEARTBEAT_INTERVAL_SECS", Some(&crate::config::constants::DEFAULT_HEARTBEAT_INTERVAL_SECS.to_string())).await
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_HEARTBEAT_INTERVAL_SECS);
+
         ServerConfig {
             host,
             port,
@@ -354,6 +360,7 @@ impl ConfigLoader {
             auth_token_expiry_hours,
             max_file_size,
             max_concurrent_requests,
+            heartbeat_interval_secs,
         }
     }
 
@@ -368,7 +375,7 @@ impl ConfigLoader {
 
         let region = self.get_config_value("AWS_REGION", Some(crate::config::constants::DEFAULT_S3_REGION)).await
             .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_REGION.to_string());
-        let bucket = self.get_config_value("S3_BUCKET", Some(crate::config::constants::DEFAULT_S3_BUCKET)).await
+        let bucket = self.get_config_value("AWS_S3_BUCKET", Some(crate::config::constants::DEFAULT_S3_BUCKET)).await
             .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_BUCKET.to_string());
         let key_prefix = self.get_config_value("S3_KEY_PREFIX", Some(crate::config::constants::DEFAULT_S3_KEY_PREFIX)).await
             .unwrap_or_else(|| crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string());
@@ -435,6 +442,8 @@ impl ConfigLoader {
         let max_backups = self.get_config_value("LOG_MAX_BACKUPS", Some("5")).await
             .and_then(|b| b.parse::<usize>().ok())
             .unwrap_or(5);
+        let format = self.get_config_value("LOG_FORMAT", Some("text")).await
+            .unwrap_or_else(|| "text".to_string());
 
         LoggingConfig {
             level,
@@ -442,6 +451,7 @@ impl ConfigLoader {
             log_file,
             max_file_size,
             max_backups,
+            format,
         }
     }
 
@@ -467,6 +477,9 @@ impl ConfigLoader {
         let transport_encrypt_metadata = self.get_config_value("COSMIC_TRANSPORT_ENCRYPT_METADATA", Some("true")).await
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(true);
+        let dev_mode = self.get_config_value("COSMIC_SYNC_DEV_MODE", Some("false")).await
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
 
         FeatureFlags {
             test_mode,
@@ -475,6 +488,7 @@ impl ConfigLoader {
             storage_encryption,
             request_validation,
             transport_encrypt_metadata,
+            dev_mode,
         }
     }
 

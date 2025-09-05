@@ -708,8 +708,8 @@ impl SyncService for SyncServiceImpl {
         }
         
         // 장치 검증
-        let is_dev_mode = std::env::var("COSMIC_SYNC_DEV_MODE").unwrap_or_default() == "1";
-        let is_test_mode = std::env::var("COSMIC_SYNC_TEST_MODE").unwrap_or_default() == "1";
+        let is_dev_mode = self.app_state.config.features.dev_mode;
+        let is_test_mode = self.app_state.config.features.test_mode;
         
         if !is_dev_mode && !is_test_mode {
             let is_valid_device = match self.app_state.storage.validate_device(&account_hash, &device_hash).await {
@@ -782,8 +782,8 @@ impl SyncService for SyncServiceImpl {
         }
         
         // 장치 검증
-        let is_dev_mode = std::env::var("COSMIC_SYNC_DEV_MODE").unwrap_or_default() == "1";
-        let is_test_mode = std::env::var("COSMIC_SYNC_TEST_MODE").unwrap_or_default() == "1";
+        let is_dev_mode = self.app_state.config.features.dev_mode;
+        let is_test_mode = self.app_state.config.features.test_mode;
         
         if !is_dev_mode && !is_test_mode {
             let is_valid_device = match self.app_state.storage.validate_device(&account_hash, &device_hash).await {
@@ -822,10 +822,7 @@ impl SyncService for SyncServiceImpl {
         info!("Registered watcher group update subscriber: {}", sub_key);
         
         // 연결 상태 확인용 초기 메시지 전송 (PING 역할)
-        let heartbeat_interval = std::env::var("HEARTBEAT_INTERVAL_SECS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(10); // 기본값 10초로 단축 (이전 30초)
+        let heartbeat_interval = self.app_state.config.server.heartbeat_interval_secs;
         
         // 클라이언트 연결 상태 모니터링을 위한 태스크
         let notification_manager_clone = self.app_state.notification_manager.clone();

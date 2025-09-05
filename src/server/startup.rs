@@ -51,9 +51,14 @@ pub async fn start_server(config: ServerConfig) -> Result<()> {
     } else {
         tracing::info!("Effective storage_path: <none> (memory fallback if not set)");
     }
-    tracing::info!("Features: dev_mode={}, test_mode={}",
-        std::env::var("COSMIC_SYNC_DEV_MODE").unwrap_or_default(),
-        std::env::var("COSMIC_SYNC_TEST_MODE").unwrap_or_default());
+    tracing::info!(
+        "Features: dev_mode={}, test_mode={}, metrics={}, request_validation={}, transport_encrypt_metadata={}",
+        app_state.config.features.dev_mode,
+        app_state.config.features.test_mode,
+        app_state.config.features.metrics_enabled,
+        app_state.config.features.request_validation,
+        app_state.config.features.transport_encrypt_metadata
+    );
     
     // Run servers with graceful shutdown
     tokio::select! {

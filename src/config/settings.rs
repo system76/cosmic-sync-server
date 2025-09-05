@@ -75,6 +75,8 @@ pub struct ServerConfig {
     pub max_file_size: usize,
     /// Maximum number of concurrent requests
     pub max_concurrent_requests: usize,
+    /// Heartbeat interval seconds for streaming keepalive
+    pub heartbeat_interval_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -87,6 +89,7 @@ impl Default for ServerConfig {
             auth_token_expiry_hours: crate::config::constants::DEFAULT_AUTH_TOKEN_EXPIRY_HOURS,
             max_file_size: crate::config::constants::DEFAULT_MAX_FILE_SIZE_BYTES,
             max_concurrent_requests: crate::config::constants::DEFAULT_MAX_CONCURRENT_REQUESTS,
+            heartbeat_interval_secs: crate::config::constants::DEFAULT_HEARTBEAT_INTERVAL_SECS,
         }
     }
 }
@@ -95,7 +98,7 @@ impl ServerConfig {
     /// Load configuration from environment variables or use defaults
     pub fn load() -> Self {
         let host = env::var("SERVER_HOST").unwrap_or_else(|_| crate::config::constants::DEFAULT_GRPC_HOST.to_string());
-        let port = env::var("SERVER_PORT")
+        let port = env::var("GRPC_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_GRPC_PORT);
@@ -116,6 +119,10 @@ impl ServerConfig {
             .ok()
             .and_then(|r| r.parse::<usize>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_MAX_CONCURRENT_REQUESTS);
+        let heartbeat_interval_secs = env::var("HEARTBEAT_INTERVAL_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_HEARTBEAT_INTERVAL_SECS);
         
         Self {
             host,
@@ -125,6 +132,7 @@ impl ServerConfig {
             auth_token_expiry_hours,
             max_file_size,
             max_concurrent_requests,
+            heartbeat_interval_secs,
         }
     }
     
@@ -233,6 +241,8 @@ pub struct LoggingConfig {
     pub max_file_size: usize,
     /// Maximum number of backups to keep
     pub max_backups: usize,
+    /// Log output format: text or json
+    pub format: String,
 }
 
 impl Default for LoggingConfig {
@@ -243,6 +253,7 @@ impl Default for LoggingConfig {
             log_file: crate::config::constants::DEFAULT_LOG_FILE.to_string(),
             max_file_size: crate::config::constants::DEFAULT_LOG_MAX_FILE_SIZE_BYTES,
             max_backups: crate::config::constants::DEFAULT_LOG_MAX_BACKUPS,
+            format: "text".to_string(),
         }
     }
 }
@@ -263,6 +274,7 @@ impl LoggingConfig {
             .ok()
             .and_then(|b| b.parse::<usize>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_LOG_MAX_BACKUPS);
+        let format = env::var("LOG_FORMAT").unwrap_or_else(|_| "text".to_string());
             
         Self {
             level,
@@ -270,6 +282,7 @@ impl LoggingConfig {
             log_file,
             max_file_size,
             max_backups,
+            format,
         }
     }
 }
@@ -289,6 +302,8 @@ pub struct FeatureFlags {
     pub request_validation: bool,
     /// Encrypt metadata (path/name) on transport to clients
     pub transport_encrypt_metadata: bool,
+    /// Enable developer mode (unifies COSMIC_SYNC_DEV_MODE)
+    pub dev_mode: bool,
 }
 
 impl Default for FeatureFlags {
@@ -300,6 +315,7 @@ impl Default for FeatureFlags {
             storage_encryption: true,
             request_validation: true,
             transport_encrypt_metadata: true,
+            dev_mode: false,
         }
     }
 }
@@ -325,7 +341,10 @@ impl FeatureFlags {
         let transport_encrypt_metadata = env::var("COSMIC_TRANSPORT_ENCRYPT_METADATA")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(true);
-            
+        let dev_mode = env::var("COSMIC_SYNC_DEV_MODE")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+        
         Self {
             test_mode,
             debug_mode,
@@ -333,6 +352,7 @@ impl FeatureFlags {
             storage_encryption,
             request_validation,
             transport_encrypt_metadata,
+            dev_mode,
         }
     }
 } 
@@ -460,7 +480,7 @@ impl S3Config {
     pub fn load() -> Self {
         Self {
             region: env::var("AWS_REGION").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_REGION.to_string()),
-            bucket: env::var("S3_BUCKET").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_BUCKET.to_string()),
+            bucket: env::var("AWS_S3_BUCKET").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_BUCKET.to_string()),
             key_prefix: env::var("S3_KEY_PREFIX").unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string()),
             access_key_id: env::var("AWS_ACCESS_KEY_ID").ok(),
             secret_access_key: env::var("AWS_SECRET_ACCESS_KEY").ok(),

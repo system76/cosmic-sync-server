@@ -4,11 +4,12 @@ use dotenv::dotenv;
 use tracing::{info, error, warn, instrument};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use cosmic_sync_server::config::constants;
+use cosmic_sync_server::config::settings::LoggingConfig;
 
 use cosmic_sync_server::{
     server::startup::start_server,
     config::{Config, Environment, ConfigLoader},
-    config::settings::{ServerConfig, DatabaseConfig, LoggingConfig, FeatureFlags, StorageConfig},
+    config::settings::{ServerConfig, DatabaseConfig, FeatureFlags, StorageConfig},
     error::{Result, SyncError},
     storage::init_storage,
     container::ContainerBuilder,
@@ -96,13 +97,14 @@ async fn start_legacy() -> Result<()> {
 /// Initialize structured logging with performance optimizations
 #[instrument]
 fn init_tracing() -> Result<()> {
-    let log_level = env::var("RUST_LOG")
-        .unwrap_or_else(|_| "cosmic_sync_server=info,info".to_string());
+    // Use unified app logging config
+    let logging_cfg = LoggingConfig::load();
+    let log_level = logging_cfg.level;
     
     let subscriber = tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&log_level))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&format!("cosmic_sync_server={},info", log_level)))
         )
         .with(
             tracing_subscriber::fmt::layer()
@@ -113,8 +115,8 @@ fn init_tracing() -> Result<()> {
                 .compact()
         );
     
-    // JSON logging for production
-    if env::var("LOG_FORMAT").unwrap_or_default() == "json" {
+    // JSON logging for production (unified via LOG_FORMAT)
+    if logging_cfg.format.to_lowercase() == "json" {
         let json_layer = tracing_subscriber::fmt::layer()
             .json()
             .with_current_span(false)

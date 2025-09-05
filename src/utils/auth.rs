@@ -2,7 +2,17 @@ use std::env;
 use tracing::{debug, error};
 use tonic::Status;
 
-/// Check if development or test mode is enabled
+/// Check if development or test mode is enabled (from FeatureFlags)
+pub fn is_dev_or_test_mode_from_flags(flags: &crate::config::settings::FeatureFlags) -> bool {
+    if flags.dev_mode || flags.test_mode {
+        debug!("Dev/Test mode enabled: skipping device validation");
+        true
+    } else {
+        false
+    }
+}
+
+/// Backward-compatible helper: reads from env if flags not available
 pub fn is_dev_or_test_mode() -> bool {
     let is_dev_mode = env::var("COSMIC_SYNC_DEV_MODE").unwrap_or_default() == "1";
     let is_test_mode = env::var("COSMIC_SYNC_TEST_MODE").unwrap_or_default() == "1";
