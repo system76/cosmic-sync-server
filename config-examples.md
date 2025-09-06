@@ -4,17 +4,17 @@
 
 ## 환경 설정
 
-서버는 `ENV` 환경 변수를 통해 현재 환경을 감지합니다:
+서버는 `ENVIRONMENT` 환경 변수를 통해 현재 환경을 감지합니다:
 
-- `development` (기본값): 로컬 환경 변수 사용
-- `staging`: AWS Secrets Manager 사용
-- `production`: AWS Secrets Manager 사용
+- `development` (기본값): 로컬 `.env` 또는 환경 변수 사용
+- `staging`: AWS Secrets Manager 사용 (us-east-2)
+- `production`: AWS Secrets Manager 사용 (us-east-2)
 
 ## 로컬 개발 환경 (.env 파일)
 
 ```bash
 # Environment Configuration
-ENV=development
+ENVIRONMENT=development
 
 # Database
 DB_HOST=localhost
@@ -28,7 +28,7 @@ DATABASE_LOG_QUERIES=false
 
 # Server
 SERVER_HOST=0.0.0.0
-SERVER_PORT=50051
+GRPC_PORT=50051
 WORKER_THREADS=4
 AUTH_TOKEN_EXPIRY_HOURS=24
 MAX_FILE_SIZE=52428800
@@ -36,10 +36,10 @@ MAX_CONCURRENT_REQUESTS=100
 
 # Storage
 STORAGE_TYPE=database
-STORAGE_PATH=/tmp/cosmic-sync
+# STORAGE_PATH=/tmp/cosmic-sync
 
 # S3 Configuration (if using S3 storage)
-S3_BUCKET=cosmic-sync-files
+AWS_S3_BUCKET=cosmic-sync-files
 S3_KEY_PREFIX=files/
 S3_ENDPOINT_URL=http://localhost:9000
 S3_FORCE_PATH_STYLE=true
@@ -64,8 +64,8 @@ REQUEST_VALIDATION=true
 # Container Mode (optional)
 COSMIC_SYNC_USE_CONTAINER=false
 
-# Rust Logging
-RUST_LOG=cosmic_sync_server=info,info
+# Log format
+LOG_FORMAT=text
 ```
 
 ## AWS Secrets Manager 설정 (Staging/Production)
@@ -74,7 +74,7 @@ RUST_LOG=cosmic_sync_server=info,info
 
 ```bash
 ENV=staging  # or production
-AWS_REGION=us-east-1
+AWS_REGION=us-east-2
 AWS_SECRET_NAME=cosmic-sync-server-config
 ```
 
@@ -111,7 +111,7 @@ aws secretsmanager create-secret \
   "MAX_CONCURRENT_REQUESTS": "1000",
   
   "STORAGE_TYPE": "s3",
-  "S3_BUCKET": "cosmic-sync-prod-files",
+  "AWS_S3_BUCKET": "cosmic-sync-prod-files",
   "S3_KEY_PREFIX": "files/",
   "S3_TIMEOUT_SECONDS": "30",
   "S3_MAX_RETRIES": "3",

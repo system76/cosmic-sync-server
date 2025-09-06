@@ -1,7 +1,7 @@
-use chrono::{DateTime, Utc, TimeZone};
-use serde::{Serialize, Deserialize};
 use crate::sync;
-use crate::utils::time::{timestamp_to_datetime, datetime_to_timestamp};
+use crate::utils::time::{datetime_to_timestamp, timestamp_to_datetime};
+use chrono::{DateTime, TimeZone, Utc};
+use serde::{Deserialize, Serialize};
 
 /// User device information
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,7 +11,7 @@ pub struct Device {
     pub account_hash: String,
     /// Device unique identifier
     pub device_hash: String,
-    pub updated_at: DateTime<Utc>, // last updated time
+    pub updated_at: DateTime<Utc>,    // last updated time
     pub registered_at: DateTime<Utc>, // Registered time
     /// Last time device synced data
     pub last_sync: DateTime<Utc>,
@@ -31,9 +31,9 @@ pub struct DeviceInfo {
     pub account_hash: String,
     /// Device name
     pub is_active: bool,
-    
+
     /// Device hash
-    pub os_version: String, 
+    pub os_version: String,
     pub app_version: String,
     pub registered_at: DateTime<Utc>,
     /// Last sync time as ISO string
@@ -76,20 +76,24 @@ impl From<&DeviceInfo> for Device {
 impl From<sync::DeviceInfo> for Device {
     fn from(info: sync::DeviceInfo) -> Self {
         let now = Utc::now();
-        
+
         // improve timestamp conversion
-        let registered_at = info.registered_at
+        let registered_at = info
+            .registered_at
             .map(|ts| match Utc.timestamp_opt(ts.seconds, ts.nanos as u32) {
                 chrono::LocalResult::Single(dt) => dt,
                 _ => now,
-            }).unwrap_or(now);
-            
-        let last_sync = info.last_sync_time
+            })
+            .unwrap_or(now);
+
+        let last_sync = info
+            .last_sync_time
             .map(|ts| match Utc.timestamp_opt(ts.seconds, ts.nanos as u32) {
                 chrono::LocalResult::Single(dt) => dt,
                 _ => now,
-            }).unwrap_or(now);
-            
+            })
+            .unwrap_or(now);
+
         Self {
             user_id: String::new(),
             updated_at: last_sync,
@@ -134,7 +138,7 @@ impl Device {
             last_sync: now,
         }
     }
-    
+
     /// Update device information
     pub fn update_info(
         &mut self,
@@ -145,24 +149,24 @@ impl Device {
         if let Some(active) = is_active {
             self.is_active = active;
         }
-        
+
         if let Some(os) = os_version {
             self.os_version = os;
         }
-        
+
         if let Some(app) = app_version {
             self.app_version = app;
         }
-        
+
         self.updated_at = Utc::now();
     }
-    
+
     /// Update last sync time
     pub fn update_last_sync(&mut self) {
         self.last_sync = Utc::now();
         self.updated_at = Utc::now();
     }
-    
+
     /// Deactivate device
     pub fn deactivate(&mut self) {
         self.is_active = false;
@@ -197,7 +201,7 @@ impl From<&Device> for sync::DeviceInfo {
             seconds: device.last_sync.timestamp(),
             nanos: 0,
         });
-        
+
         Self {
             account_hash: device.account_hash.clone(),
             is_active: device.is_active,

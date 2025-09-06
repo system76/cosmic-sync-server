@@ -1,12 +1,12 @@
-pub mod service;
-pub mod http;
-pub mod startup;
 pub mod app_state;
-pub mod notification_manager;
-pub mod event_bus;
+pub mod connection_cleanup;
 pub mod connection_handler;
 pub mod connection_tracker;
-pub mod connection_cleanup;
+pub mod event_bus;
+pub mod http;
+pub mod notification_manager;
+pub mod service;
+pub mod startup;
 
 // New reusable architecture modules
 pub mod common;
@@ -23,12 +23,14 @@ use tracing::info;
 pub type Server = ServiceManager<SyncServerComponent>;
 
 /// Helper function to create a new server with the SyncServerComponent
-pub async fn create_sync_server(config: ServerConfig) -> Result<Server, Box<dyn std::error::Error>> {
+pub async fn create_sync_server(
+    config: ServerConfig,
+) -> Result<Server, Box<dyn std::error::Error>> {
     info!("🚀 Creating Cosmic Sync Server with reusable architecture");
-    
+
     let component = SyncServerComponent::new(config).await?;
     let server = ServiceManager::new(component).await?;
-    
+
     info!("✅ Sync server created successfully");
     Ok(server)
 }
@@ -49,4 +51,3 @@ pub async fn create_notification_service(config: NotificationConfig) -> Result<S
     Ok(server)
 }
 */
-

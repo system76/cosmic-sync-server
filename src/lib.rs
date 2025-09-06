@@ -4,60 +4,56 @@ pub use sqlx;
 pub use tonic;
 
 // Core module definitions with optimized structure
-pub mod config;
-pub mod models;
-pub mod storage;
-pub mod server;
-pub mod sync;
-pub mod services;
-pub mod handlers;
 pub mod auth;
-pub mod utils;
+pub mod config;
 pub mod error;
+pub mod handlers;
+pub mod models;
+pub mod server;
+pub mod services;
+pub mod storage;
+pub mod sync;
+pub mod utils;
 
 // New optimized modules
-pub mod monitoring;
-pub mod validation;
 pub mod container;
 pub mod domain;
+pub mod monitoring;
+pub mod validation;
 
 // Unified error handling
-pub use error::{SyncError, Result};
+pub use error::{Result, SyncError};
 pub type AppResult<T> = Result<T>;
 
 // Essential re-exports for convenience
 pub use server::{
-    startup::{start_server, start_server_with_storage},
-    service::SyncServiceImpl,
     app_state::AppState,
+    service::SyncServiceImpl,
+    startup::{start_server, start_server_with_storage},
 };
 
 // Container and dependency injection
 pub use container::{
-    AppContainer, ContainerBuilder, ServiceRegistry,
-    ServiceProvider, StorageProvider, AuthServiceProvider,
-    DeviceServiceProvider, FileServiceProvider,
-    EncryptionServiceProvider,
+    AppContainer, AuthServiceProvider, ContainerBuilder, DeviceServiceProvider,
+    EncryptionServiceProvider, FileServiceProvider, ServiceProvider, ServiceRegistry,
+    StorageProvider,
 };
 
-pub use config::settings::{Config, ServerConfig, DatabaseConfig};
+pub use config::settings::{Config, DatabaseConfig, ServerConfig};
 
 // Storage abstractions with performance traits
 pub use storage::{
-    Storage, StorageError, 
-    Result as StorageResult,
-    mysql::MySqlStorage,
-    memory::MemoryStorage,
-    init_storage,
+    init_storage, memory::MemoryStorage, mysql::MySqlStorage, Result as StorageResult, Storage,
+    StorageError,
 };
 
 // Model exports
 pub use models::{
     account::Account,
-    auth::AuthToken, 
+    auth::AuthToken,
     device::Device,
     file::FileInfo,
-    watcher::{WatcherGroup, Watcher, Condition},
+    watcher::{Condition, Watcher, WatcherGroup},
 };
 
 // gRPC service exports
@@ -84,24 +80,21 @@ pub mod features {
 // Prelude for common imports
 pub mod prelude {
     pub use crate::{
-        Result, SyncError, AppResult,
-        Storage, Account, Device, FileInfo, AuthToken,
-        ServerConfig, DatabaseConfig,
-        AppContainer, ContainerBuilder,
-        VERSION, NAME,
+        Account, AppContainer, AppResult, AuthToken, ContainerBuilder, DatabaseConfig, Device,
+        FileInfo, Result, ServerConfig, Storage, SyncError, NAME, VERSION,
     };
-    
+
     pub use async_trait::async_trait;
-    pub use serde::{Serialize, Deserialize};
-    pub use tracing::{debug, info, warn, error, instrument};
+    pub use serde::{Deserialize, Serialize};
     pub use tokio;
+    pub use tracing::{debug, error, info, instrument, warn};
 }
 
 // Configuration helpers
 pub mod config_helpers {
-    use std::env;
     use crate::{Result, SyncError};
-    
+    use std::env;
+
     /// Parse environment variable with type conversion
     pub fn parse_env_var<T>(key: &str, default: T) -> Result<T>
     where
@@ -109,18 +102,18 @@ pub mod config_helpers {
         T::Err: std::fmt::Display,
     {
         match env::var(key) {
-            Ok(value) => value.parse().map_err(|e| {
-                SyncError::Config(format!("Failed to parse {}: {}", key, e))
-            }),
+            Ok(value) => value
+                .parse()
+                .map_err(|e| SyncError::Config(format!("Failed to parse {}: {}", key, e))),
             Err(_) => Ok(default),
         }
     }
-    
+
     /// Get environment variable with default value
     pub fn get_env_var(key: &str, default: &str) -> String {
         env::var(key).unwrap_or_else(|_| default.to_string())
     }
-    
+
     /// Get required environment variable
     pub fn get_required_env_var(key: &str) -> Result<String> {
         env::var(key).map_err(|_| {
@@ -132,7 +125,7 @@ pub mod config_helpers {
 // Performance utilities
 pub mod performance {
     use std::time::{Duration, Instant};
-    
+
     /// Measure execution time of a function
     pub async fn measure_async<F, Fut, T>(f: F) -> (T, Duration)
     where
@@ -144,7 +137,7 @@ pub mod performance {
         let duration = start.elapsed();
         (result, duration)
     }
-    
+
     /// Format duration in human readable form
     pub fn format_duration(duration: Duration) -> String {
         let ms = duration.as_millis();
@@ -168,22 +161,22 @@ pub type DeviceHash = String;
 pub mod constants {
     /// Default page size for pagination
     pub const DEFAULT_PAGE_SIZE: u32 = 50;
-    
+
     /// Maximum page size
     pub const MAX_PAGE_SIZE: u32 = 1000;
-    
+
     /// Default cache TTL in seconds
     pub const DEFAULT_CACHE_TTL: u32 = 3600;
-    
+
     /// Maximum file size (100MB)
     pub const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
-    
+
     /// Authentication token expiry (24 hours)
     pub const DEFAULT_TOKEN_EXPIRY_HOURS: i64 = 24;
-    
+
     /// Maximum concurrent connections
     pub const MAX_CONCURRENT_CONNECTIONS: usize = 10000;
-    
+
     /// Request timeout in seconds
     pub const REQUEST_TIMEOUT_SECONDS: u64 = 120;
 }
@@ -191,8 +184,8 @@ pub mod constants {
 // Health check utilities
 pub mod health {
     use crate::Result;
-    use serde::{Serialize, Deserialize};
-    
+    use serde::{Deserialize, Serialize};
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct HealthStatus {
         pub status: String,
@@ -201,14 +194,14 @@ pub mod health {
         pub version: String,
         pub components: std::collections::HashMap<String, ComponentHealth>,
     }
-    
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ComponentHealth {
         pub healthy: bool,
         pub response_time_ms: Option<u64>,
         pub error: Option<String>,
     }
-    
+
     impl HealthStatus {
         pub fn new() -> Self {
             Self {
@@ -219,13 +212,12 @@ pub mod health {
                 components: std::collections::HashMap::new(),
             }
         }
-        
+
         pub fn is_healthy(&self) -> bool {
-            self.status == "healthy" && 
-            self.components.values().all(|c| c.healthy)
+            self.status == "healthy" && self.components.values().all(|c| c.healthy)
         }
     }
-    
+
     impl Default for HealthStatus {
         fn default() -> Self {
             Self::new()

@@ -1,9 +1,9 @@
-use chrono::{DateTime, Utc, TimeZone};
+use crate::sync;
+use crate::utils::time::timestamp_serde;
+use chrono::{DateTime, TimeZone, Utc};
+use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::sync;
-use prost_types::Timestamp;
-use crate::utils::time::timestamp_serde;
 // timestamp_serde already imported above
 use crate::utils::crypto::generate_file_id;
 
@@ -47,7 +47,7 @@ impl SyncFile {
     ) -> Self {
         let now = Utc::now();
         let file_id = generate_file_id(&user_id, &filename, &file_hash);
-        
+
         Self {
             id: Uuid::new_v4().to_string(),
             user_id,
@@ -68,7 +68,7 @@ impl SyncFile {
             revision,
         }
     }
-    
+
     // add simplified constructor method
     pub fn new_simple(
         filename: String,
@@ -79,7 +79,7 @@ impl SyncFile {
         is_encrypted: bool,
     ) -> Self {
         let now = Utc::now();
-        
+
         Self {
             id: Uuid::new_v4().to_string(),
             user_id: account_hash,
@@ -88,7 +88,7 @@ impl SyncFile {
             watcher_id: 0,
             file_id,
             filename,
-            file_hash: "".to_string(),  // actual hash is calculated by client
+            file_hash: "".to_string(), // actual hash is calculated by client
             file_path: "".to_string(),
             file_size: file_size as i64,
             mime_type: "".to_string(),
@@ -100,7 +100,7 @@ impl SyncFile {
             revision: 0,
         }
     }
-    
+
     /// update file metadata
     pub fn update_metadata(
         &mut self,
@@ -115,13 +115,13 @@ impl SyncFile {
         self.modified_time = modified_time;
         self.last_updated = Utc::now();
     }
-    
+
     /// mark file as deleted
     pub fn mark_as_deleted(&mut self) {
         self.is_deleted = true;
         self.last_updated = Utc::now();
     }
-    
+
     /// restore file
     pub fn restore(&mut self) {
         self.is_deleted = false;
@@ -185,11 +185,9 @@ impl From<sync::FileInfo> for FileInfo {
             watcher_id: proto.watcher_id,
             is_encrypted: proto.is_encrypted,
             file_path: proto.file_path,
-            updated_time: proto.updated_time.unwrap_or_else(|| {
-                Timestamp {
-                    seconds: Utc::now().timestamp(),
-                    nanos: 0,
-                }
+            updated_time: proto.updated_time.unwrap_or_else(|| Timestamp {
+                seconds: Utc::now().timestamp(),
+                nanos: 0,
             }),
             revision: proto.revision,
             account_hash: String::new(),
@@ -254,10 +252,11 @@ impl From<FileInfo> for FileInfoData {
 // FileInfoData -> SyncFileInfo conversion
 impl From<FileInfoData> for SyncFileInfo {
     fn from(file: FileInfoData) -> Self {
-        let upload_time = match Utc.timestamp_opt(file.updated_time.seconds, file.updated_time.nanos as u32) {
-            chrono::LocalResult::Single(dt) => dt,
-            _ => Utc::now(),
-        };        
+        let upload_time =
+            match Utc.timestamp_opt(file.updated_time.seconds, file.updated_time.nanos as u32) {
+                chrono::LocalResult::Single(dt) => dt,
+                _ => Utc::now(),
+            };
         Self {
             file_id: file.file_id,
             filename: file.filename,
@@ -279,7 +278,7 @@ impl From<SyncFileInfo> for FileInfoData {
             seconds: file.upload_time.timestamp(),
             nanos: file.upload_time.timestamp_subsec_nanos() as i32,
         };
-        
+
         Self {
             file_id: file.file_id,
             filename: file.filename,
@@ -326,7 +325,7 @@ pub struct FileEntry {
     pub size: i64,
     /// Group ID
     pub group_id: i32,
-    /// Watcher ID 
+    /// Watcher ID
     pub watcher_id: i32,
     /// Revision number
     pub revision: i64,

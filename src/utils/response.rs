@@ -1,6 +1,5 @@
 use crate::sync::{
-    UploadFileResponse, DownloadFileResponse, DeleteFileResponse,
-    RegisterDeviceResponse,
+    DeleteFileResponse, DownloadFileResponse, RegisterDeviceResponse, UploadFileResponse,
 };
 
 /// Create error response for file upload
@@ -65,10 +64,13 @@ pub fn device_register_error(message: impl Into<String>) -> RegisterDeviceRespon
 }
 
 /// Create success response for device registration
-pub fn device_register_success(device_hash: String, message: impl Into<String>) -> RegisterDeviceResponse {
+pub fn device_register_success(
+    device_hash: String,
+    message: impl Into<String>,
+) -> RegisterDeviceResponse {
     RegisterDeviceResponse {
         success: true,
         device_hash,
         return_message: message.into(),
     }
-} 
+}

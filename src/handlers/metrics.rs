@@ -21,7 +21,7 @@ pub async fn prometheus_metrics() -> Result<HttpResponse> {
         env!("CARGO_PKG_VERSION"),
         uptime
     );
-    
+
     Ok(HttpResponse::Ok()
         .content_type("text/plain; version=0.0.4; charset=utf-8")
         .body(metrics))
@@ -44,4 +44,4 @@ pub async fn detailed_metrics() -> Result<HttpResponse> {
             "timestamp": chrono::Utc::now().to_rfc3339()
         }
     })))
-} 
+}

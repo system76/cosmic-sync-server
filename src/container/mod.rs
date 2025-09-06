@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use async_trait::async_trait;
 use crate::{
-    storage::Storage,
-    services::{AuthService, DeviceService, FileService, EncryptionService},
     config::settings::Config,
     error::Result,
+    services::{AuthService, DeviceService, EncryptionService, FileService},
+    storage::Storage,
 };
+use async_trait::async_trait;
+use std::sync::Arc;
 
 pub mod builder;
 pub mod registry;
@@ -65,9 +65,9 @@ impl AppContainer {
     pub async fn health_check(&self) -> Result<bool> {
         // 모든 서비스의 헬스체크 수행
         let storage_ok = self.storage.health_check().await.unwrap_or(false);
-        
+
         // 추가 서비스 헬스체크를 여기에 추가할 수 있음
-        
+
         Ok(storage_ok)
     }
 
@@ -75,9 +75,9 @@ impl AppContainer {
     pub async fn shutdown(&self) -> Result<()> {
         // 스토리지 연결 정리
         self.storage.close().await?;
-        
+
         // 기타 리소스 정리 작업
-        
+
         Ok(())
     }
 }
@@ -108,7 +108,7 @@ impl AppContainer {
 #[async_trait]
 pub trait ServiceProvider: Send + Sync {
     type Service: Send + Sync + 'static + ?Sized;
-    
+
     async fn provide(&self, container: &AppContainer) -> Result<Arc<Self::Service>>;
 }
 
@@ -122,7 +122,7 @@ pub struct EncryptionServiceProvider;
 #[async_trait]
 impl ServiceProvider for StorageProvider {
     type Service = dyn Storage;
-    
+
     async fn provide(&self, container: &AppContainer) -> Result<Arc<Self::Service>> {
         Ok(container.storage())
     }
@@ -131,7 +131,7 @@ impl ServiceProvider for StorageProvider {
 #[async_trait]
 impl ServiceProvider for AuthServiceProvider {
     type Service = AuthService;
-    
+
     async fn provide(&self, container: &AppContainer) -> Result<Arc<Self::Service>> {
         Ok(container.auth_service())
     }
@@ -140,7 +140,7 @@ impl ServiceProvider for AuthServiceProvider {
 #[async_trait]
 impl ServiceProvider for DeviceServiceProvider {
     type Service = DeviceService;
-    
+
     async fn provide(&self, container: &AppContainer) -> Result<Arc<Self::Service>> {
         Ok(container.device_service())
     }
@@ -149,7 +149,7 @@ impl ServiceProvider for DeviceServiceProvider {
 #[async_trait]
 impl ServiceProvider for FileServiceProvider {
     type Service = FileService;
-    
+
     async fn provide(&self, container: &AppContainer) -> Result<Arc<Self::Service>> {
         Ok(container.file_service())
     }
@@ -157,11 +157,10 @@ impl ServiceProvider for FileServiceProvider {
 
 #[async_trait]
 // WatcherService has been removed
-
 #[async_trait]
 impl ServiceProvider for EncryptionServiceProvider {
     type Service = EncryptionService;
-    
+
     async fn provide(&self, container: &AppContainer) -> Result<Arc<Self::Service>> {
         Ok(container.encryption_service())
     }

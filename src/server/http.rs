@@ -13,11 +13,11 @@ pub struct HealthCheckResponse {
 #[get("/health")]
 pub async fn handle_health_check() -> impl Responder {
     debug!("Health check requested");
-    
+
     let response = HealthCheckResponse {
         status: "SERVING".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     };
-    
+
     HttpResponse::Ok().json(response)
 }

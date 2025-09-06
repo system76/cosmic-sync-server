@@ -1,11 +1,11 @@
 // Domain entities - Core business objects
 // 기존 models를 도메인 엔티티로 점진적 마이그레이션
 
-use serde::{Serialize, Deserialize};
 use crate::{
-    domain::{Entity, AggregateRoot, DomainEvent, ValueObject},
+    domain::{AggregateRoot, DomainEvent, Entity, ValueObject},
     error::{Result, SyncError},
 };
+use serde::{Deserialize, Serialize};
 
 /// 계정 도메인 엔티티
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,7 +23,7 @@ impl Account {
     /// 새 계정 생성
     pub fn create(email: String, account_hash: String) -> Result<Self> {
         let now = chrono::Utc::now().timestamp();
-        
+
         let mut account = Self {
             id: uuid::Uuid::new_v4().to_string(),
             email: email.clone(),
@@ -33,100 +33,108 @@ impl Account {
             is_active: true,
             events: Vec::new(),
         };
-        
+
         // 계정 생성 이벤트 추가
         account.events.push(AccountEvent::Created {
             account_id: account.id.clone(),
             email,
             timestamp: now,
         });
-        
+
         account.validate()?;
         Ok(account)
     }
-    
+
     /// 계정 비활성화
     pub fn deactivate(&mut self) -> Result<()> {
         if !self.is_active {
-            return Err(SyncError::Validation("Account is already inactive".to_string()));
+            return Err(SyncError::Validation(
+                "Account is already inactive".to_string(),
+            ));
         }
-        
+
         self.is_active = false;
         self.updated_at = chrono::Utc::now().timestamp();
-        
+
         self.events.push(AccountEvent::Deactivated {
             account_id: self.id.clone(),
             timestamp: self.updated_at,
         });
-        
+
         Ok(())
     }
-    
+
     /// 이메일 업데이트
     pub fn update_email(&mut self, new_email: String) -> Result<()> {
         if new_email == self.email {
             return Ok(()); // 변경사항 없음
         }
-        
+
         // 이메일 검증
         if !new_email.contains('@') {
             return Err(SyncError::Validation("Invalid email format".to_string()));
         }
-        
+
         let old_email = self.email.clone();
         self.email = new_email.clone();
         self.updated_at = chrono::Utc::now().timestamp();
-        
+
         self.events.push(AccountEvent::EmailUpdated {
             account_id: self.id.clone(),
             old_email,
             new_email,
             timestamp: self.updated_at,
         });
-        
+
         Ok(())
     }
 }
 
 impl Entity for Account {
     type Id = String;
-    
+
     fn id(&self) -> &Self::Id {
         &self.id
     }
-    
+
     fn validate(&self) -> Result<()> {
         if self.id.is_empty() {
-            return Err(SyncError::Validation("Account ID cannot be empty".to_string()));
+            return Err(SyncError::Validation(
+                "Account ID cannot be empty".to_string(),
+            ));
         }
-        
+
         if self.email.is_empty() || !self.email.contains('@') {
             return Err(SyncError::Validation("Invalid email address".to_string()));
         }
-        
+
         if self.account_hash.is_empty() {
-            return Err(SyncError::Validation("Account hash cannot be empty".to_string()));
+            return Err(SyncError::Validation(
+                "Account hash cannot be empty".to_string(),
+            ));
         }
-        
+
         if self.created_at <= 0 || self.updated_at <= 0 {
             return Err(SyncError::Validation("Invalid timestamps".to_string()));
         }
-        
+
         if self.updated_at < self.created_at {
-            return Err(SyncError::Validation("Updated time cannot be before created time".to_string()));
+            return Err(SyncError::Validation(
+                "Updated time cannot be before created time".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 }
 
 impl AggregateRoot for Account {
     type Event = AccountEvent;
-    
+
     fn events(&self) -> Vec<Self::Event> {
         self.events.clone()
     }
-    
+
     fn clear_events(&mut self) {
         self.events.clear();
     }
@@ -160,7 +168,7 @@ impl DomainEvent for AccountEvent {
             AccountEvent::Deactivated { .. } => "account.deactivated",
         }
     }
-    
+
     fn timestamp(&self) -> i64 {
         match self {
             AccountEvent::Created { timestamp, .. } => *timestamp,
@@ -168,7 +176,7 @@ impl DomainEvent for AccountEvent {
             AccountEvent::Deactivated { timestamp, .. } => *timestamp,
         }
     }
-    
+
     fn event_id(&self) -> String {
         uuid::Uuid::new_v4().to_string()
     }
@@ -201,9 +209,9 @@ pub enum DeviceType {
 impl ValueObject for DeviceType {
     fn validate(&self) -> Result<()> {
         match self {
-            DeviceType::Other(name) if name.is_empty() => {
-                Err(SyncError::Validation("Device type name cannot be empty".to_string()))
-            }
+            DeviceType::Other(name) if name.is_empty() => Err(SyncError::Validation(
+                "Device type name cannot be empty".to_string(),
+            )),
             _ => Ok(()),
         }
     }
@@ -218,9 +226,9 @@ impl Device {
         device_type: DeviceType,
     ) -> Result<Self> {
         let now = chrono::Utc::now().timestamp();
-        
+
         device_type.validate()?;
-        
+
         let mut device = Self {
             device_hash: device_hash.clone(),
             account_hash: account_hash.clone(),
@@ -231,7 +239,7 @@ impl Device {
             created_at: now,
             events: Vec::new(),
         };
-        
+
         device.events.push(DeviceEvent::Registered {
             device_hash,
             account_hash,
@@ -239,76 +247,84 @@ impl Device {
             device_type,
             timestamp: now,
         });
-        
+
         device.validate()?;
         Ok(device)
     }
-    
+
     /// 디바이스 활동 업데이트
     pub fn update_activity(&mut self) {
         self.last_seen = chrono::Utc::now().timestamp();
-        
+
         self.events.push(DeviceEvent::ActivityUpdated {
             device_hash: self.device_hash.clone(),
             timestamp: self.last_seen,
         });
     }
-    
+
     /// 디바이스 비활성화
     pub fn deactivate(&mut self) -> Result<()> {
         if !self.is_active {
-            return Err(SyncError::Validation("Device is already inactive".to_string()));
+            return Err(SyncError::Validation(
+                "Device is already inactive".to_string(),
+            ));
         }
-        
+
         self.is_active = false;
         let timestamp = chrono::Utc::now().timestamp();
-        
+
         self.events.push(DeviceEvent::Deactivated {
             device_hash: self.device_hash.clone(),
             timestamp,
         });
-        
+
         Ok(())
     }
 }
 
 impl Entity for Device {
     type Id = String;
-    
+
     fn id(&self) -> &Self::Id {
         &self.device_hash
     }
-    
+
     fn validate(&self) -> Result<()> {
         if self.device_hash.is_empty() {
-            return Err(SyncError::Validation("Device hash cannot be empty".to_string()));
+            return Err(SyncError::Validation(
+                "Device hash cannot be empty".to_string(),
+            ));
         }
-        
+
         if self.account_hash.is_empty() {
-            return Err(SyncError::Validation("Account hash cannot be empty".to_string()));
+            return Err(SyncError::Validation(
+                "Account hash cannot be empty".to_string(),
+            ));
         }
-        
+
         if self.device_name.is_empty() {
-            return Err(SyncError::Validation("Device name cannot be empty".to_string()));
+            return Err(SyncError::Validation(
+                "Device name cannot be empty".to_string(),
+            ));
         }
-        
+
         if self.created_at <= 0 || self.last_seen <= 0 {
             return Err(SyncError::Validation("Invalid timestamps".to_string()));
         }
-        
+
         self.device_type.validate()?;
-        
+
         Ok(())
     }
 }
 
 impl AggregateRoot for Device {
     type Event = DeviceEvent;
-    
+
     fn events(&self) -> Vec<Self::Event> {
         self.events.clone()
     }
-    
+
     fn clear_events(&mut self) {
         self.events.clear();
     }
@@ -342,7 +358,7 @@ impl DomainEvent for DeviceEvent {
             DeviceEvent::Deactivated { .. } => "device.deactivated",
         }
     }
-    
+
     fn timestamp(&self) -> i64 {
         match self {
             DeviceEvent::Registered { timestamp, .. } => *timestamp,
@@ -350,7 +366,7 @@ impl DomainEvent for DeviceEvent {
             DeviceEvent::Deactivated { timestamp, .. } => *timestamp,
         }
     }
-    
+
     fn event_id(&self) -> String {
         uuid::Uuid::new_v4().to_string()
     }
@@ -374,21 +390,27 @@ impl From<crate::models::account::Account> for Account {
 impl From<Account> for crate::models::account::Account {
     fn from(entity: Account) -> Self {
         use chrono::TimeZone;
-        
+
         let id = entity.id.clone(); // Clone first to avoid move
-        
+
         Self {
             account_hash: entity.account_hash,
             id: id.clone(),
             email: entity.email,
-            name: "Unknown".to_string(), // Default value
+            name: "Unknown".to_string(),   // Default value
             user_type: "user".to_string(), // Default value
             password_hash: "".to_string(), // Default value
-            salt: "".to_string(), // Default value
+            salt: "".to_string(),          // Default value
             is_active: entity.is_active,
-            created_at: chrono::Utc.timestamp_opt(entity.created_at, 0).single().unwrap_or_else(|| chrono::Utc::now()),
+            created_at: chrono::Utc
+                .timestamp_opt(entity.created_at, 0)
+                .single()
+                .unwrap_or_else(|| chrono::Utc::now()),
             last_login: chrono::Utc::now(), // Default value
-            updated_at: chrono::Utc.timestamp_opt(entity.updated_at, 0).single().unwrap_or_else(|| chrono::Utc::now()),
+            updated_at: chrono::Utc
+                .timestamp_opt(entity.updated_at, 0)
+                .single()
+                .unwrap_or_else(|| chrono::Utc::now()),
             user_id: id,
         }
     }
@@ -408,7 +430,7 @@ impl From<crate::models::device::Device> for Device {
         } else {
             DeviceType::Other(model.os_version.clone())
         };
-        
+
         Self {
             device_hash: model.device_hash,
             account_hash: model.account_hash,
@@ -425,7 +447,7 @@ impl From<crate::models::device::Device> for Device {
 impl From<Device> for crate::models::device::Device {
     fn from(entity: Device) -> Self {
         use chrono::TimeZone;
-        
+
         let os_version = match entity.device_type {
             DeviceType::Desktop => "Desktop OS",
             DeviceType::Laptop => "Laptop OS",
@@ -434,14 +456,20 @@ impl From<Device> for crate::models::device::Device {
             DeviceType::Server => "Server OS",
             DeviceType::Other(ref name) => name,
         };
-        
+
         Self {
             user_id: entity.device_name,
             account_hash: entity.account_hash,
             device_hash: entity.device_hash,
             updated_at: chrono::Utc::now(), // Default to now
-            registered_at: chrono::Utc.timestamp_opt(entity.created_at, 0).single().unwrap_or_else(|| chrono::Utc::now()),
-            last_sync: chrono::Utc.timestamp_opt(entity.last_seen, 0).single().unwrap_or_else(|| chrono::Utc::now()),
+            registered_at: chrono::Utc
+                .timestamp_opt(entity.created_at, 0)
+                .single()
+                .unwrap_or_else(|| chrono::Utc::now()),
+            last_sync: chrono::Utc
+                .timestamp_opt(entity.last_seen, 0)
+                .single()
+                .unwrap_or_else(|| chrono::Utc::now()),
             is_active: entity.is_active,
             os_version: os_version.to_string(),
             app_version: "1.0.0".to_string(), // Default version
@@ -455,16 +483,14 @@ mod tests {
 
     #[test]
     fn test_account_creation() {
-        let account = Account::create(
-            "test@example.com".to_string(),
-            "hash123".to_string(),
-        ).unwrap();
-        
+        let account =
+            Account::create("test@example.com".to_string(), "hash123".to_string()).unwrap();
+
         assert_eq!(account.email, "test@example.com");
         assert_eq!(account.account_hash, "hash123");
         assert!(account.is_active);
         assert_eq!(account.events.len(), 1);
-        
+
         match &account.events[0] {
             AccountEvent::Created { email, .. } => {
                 assert_eq!(email, "test@example.com");
@@ -480,8 +506,9 @@ mod tests {
             "account123".to_string(),
             "My Laptop".to_string(),
             DeviceType::Laptop,
-        ).unwrap();
-        
+        )
+        .unwrap();
+
         assert_eq!(device.device_hash, "device123");
         assert_eq!(device.device_name, "My Laptop");
         assert_eq!(device.device_type, DeviceType::Laptop);
@@ -491,11 +518,8 @@ mod tests {
 
     #[test]
     fn test_account_validation() {
-        let result = Account::create(
-            "invalid-email".to_string(),
-            "hash123".to_string(),
-        );
-        
+        let result = Account::create("invalid-email".to_string(), "hash123".to_string());
+
         assert!(result.is_err());
     }
 }

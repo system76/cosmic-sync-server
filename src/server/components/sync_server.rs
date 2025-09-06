@@ -1,11 +1,11 @@
-use crate::server::common::{Component, ComponentHealth, ComponentStatus, ComponentMetrics};
-use crate::server::app_state::AppState;
 use crate::config::settings::ServerConfig;
+use crate::server::app_state::AppState;
+use crate::server::common::{Component, ComponentHealth, ComponentMetrics, ComponentStatus};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error, debug, warn};
-use serde::{Serialize, Deserialize};
+use tracing::{debug, error, info, warn};
 
 /// Metrics specific to the sync server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +35,7 @@ impl ComponentMetrics for SyncServerMetrics {
     fn reset(&mut self) {
         *self = Self::default();
     }
-    
+
     fn merge(&mut self, other: &Self) {
         self.total_requests += other.total_requests;
         self.active_connections = other.active_connections; // Use latest value
@@ -83,7 +83,7 @@ impl std::fmt::Debug for SyncServerComponent {
 impl SyncServerComponent {
     pub async fn new(config: ServerConfig) -> Result<Self, SyncServerError> {
         info!("🔧 Creating SyncServerComponent");
-        
+
         let app_state = Arc::new(
             AppState::new_with_storage_and_server_config(
                 // In component mode we don't have external storage; fall back to legacy helper to honor config
@@ -91,9 +91,9 @@ impl SyncServerComponent {
                 &config,
             )
             .await
-            .map_err(|e| SyncServerError::ConfigError(e.to_string()))?
+            .map_err(|e| SyncServerError::ConfigError(e.to_string()))?,
         );
-        
+
         Ok(Self {
             config,
             app_state,
@@ -102,14 +102,14 @@ impl SyncServerComponent {
             start_time: None,
         })
     }
-    
+
     /// Update metrics based on current state
     async fn update_metrics(&mut self) {
         if let Some(start_time) = self.start_time {
             let uptime = chrono::Utc::now() - start_time;
             self.metrics.uptime_seconds = uptime.num_seconds() as u64;
         }
-        
+
         // Get active connections from app state
         let stats = self.app_state.client_store.get_connection_stats().await;
         self.metrics.active_connections = stats.values().sum::<usize>() as u32;
@@ -121,21 +121,21 @@ impl Component for SyncServerComponent {
     type Config = ServerConfig;
     type Metrics = SyncServerMetrics;
     type Error = SyncServerError;
-    
+
     fn name(&self) -> &'static str {
         "SyncServer"
     }
-    
+
     fn config(&self) -> &Self::Config {
         &self.config
     }
-    
+
     async fn start(&mut self) -> Result<(), SyncServerError> {
         info!("Starting SyncServer component");
-        
+
         self.status = ComponentStatus::Starting;
         self.start_time = Some(chrono::Utc::now());
-        
+
         // Start client cleanup task
         self.app_state.start_client_cleanup_task();
         // Retention cleanup disabled (do not delete files on server start)
@@ -146,92 +146,102 @@ impl Component for SyncServerComponent {
             let cfg = &self.app_state.config;
             if let Some(key) = cfg.server_encode_key.as_ref() {
                 if key.len() == 32 {
-                    if let Some(mysql) = self.app_state.storage.as_any().downcast_ref::<crate::storage::mysql::MySqlStorage>() {
+                    if let Some(mysql) = self
+                        .app_state
+                        .storage
+                        .as_any()
+                        .downcast_ref::<crate::storage::mysql::MySqlStorage>()
+                    {
                         match mysql.migrate_encrypt_paths(1000).await {
-                            Ok(updated) => info!("🔒 Path encryption migration updated {} rows", updated),
+                            Ok(updated) => {
+                                info!("🔒 Path encryption migration updated {} rows", updated)
+                            }
                             Err(e) => warn!("Path encryption migration failed: {}", e),
                         }
                     }
                 }
             }
         }
-        
+
         // Here we would start the actual gRPC server
         // For now, we'll simulate a successful start
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        
+
         self.status = ComponentStatus::Running;
-        
+
         info!("✅ SyncServerComponent started successfully");
         Ok(())
     }
-    
+
     async fn stop(&mut self) -> Result<(), Self::Error> {
         info!("🛑 Stopping SyncServerComponent");
-        
+
         self.status = ComponentStatus::Stopping;
-        
+
         // Graceful shutdown logic would go here
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        
+
         self.status = ComponentStatus::Stopped;
         self.start_time = None;
-        
+
         info!("✅ SyncServerComponent stopped successfully");
         Ok(())
     }
-    
+
     async fn health_check(&self) -> ComponentHealth {
         let mut health = ComponentHealth::default();
         health.last_check = chrono::Utc::now();
-        
+
         // Check if component is running
         let is_running = self.status == ComponentStatus::Running;
-        
+
         // Check dependencies
         health.dependencies.insert("app_state".to_string(), true);
         health.dependencies.insert("database".to_string(), true); // Would check actual DB
-        health.dependencies.insert("storage".to_string(), true);  // Would check actual storage
-        
+        health.dependencies.insert("storage".to_string(), true); // Would check actual storage
+
         health.is_healthy = is_running && health.dependencies.values().all(|&v| v);
-        
+
         if !health.is_healthy {
             health.message = Some("One or more dependencies are unhealthy".to_string());
         }
-        
+
         health
     }
-    
+
     fn status(&self) -> ComponentStatus {
         self.status.clone()
     }
-    
+
     fn metrics(&self) -> Self::Metrics {
         let mut metrics = self.metrics.clone();
-        
+
         // Update uptime if running
         if let Some(start_time) = self.start_time {
             let uptime = chrono::Utc::now() - start_time;
             metrics.uptime_seconds = uptime.num_seconds() as u64;
         }
-        
+
         // Note: active_connections will be updated by background tasks
         // We return the cached value here
-        
+
         metrics
     }
-    
+
     async fn update_config(&mut self, config: Self::Config) -> Result<(), Self::Error> {
         info!("🔧 Updating SyncServerComponent configuration");
-        
+
         // Validate new configuration
         if let Err(e) = config.address() {
-            return Err(SyncServerError::ConfigError(format!("Invalid address: {}", e)));
+            return Err(SyncServerError::ConfigError(format!(
+                "Invalid address: {}",
+                e
+            )));
         }
-        
+
         self.config = config;
-        
+
         info!("✅ SyncServerComponent configuration updated");
         Ok(())
     }
-} 
+}

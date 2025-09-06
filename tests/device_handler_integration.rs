@@ -13,7 +13,9 @@ use cosmic_sync_server::sync::RegisterDeviceRequest;
 async fn test_register_device_empty_account_hash() {
     let storage = Arc::new(MemoryStorage::new());
     let server_cfg = cosmic_sync_server::config::settings::ServerConfig::default();
-    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg).await.unwrap();
+    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg)
+        .await
+        .unwrap();
     let handler = DeviceHandler::new(app_state.into());
 
     let request = Request::new(RegisterDeviceRequest {
@@ -36,7 +38,9 @@ async fn test_register_device_empty_account_hash() {
 async fn test_register_device_empty_device_hash() {
     let storage = Arc::new(MemoryStorage::new());
     let server_cfg = cosmic_sync_server::config::settings::ServerConfig::default();
-    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg).await.unwrap();
+    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg)
+        .await
+        .unwrap();
     let handler = DeviceHandler::new(app_state.into());
 
     let request = Request::new(RegisterDeviceRequest {
@@ -59,7 +63,9 @@ async fn test_register_device_empty_device_hash() {
 async fn test_register_device_too_long_device_hash() {
     let storage = Arc::new(MemoryStorage::new());
     let server_cfg = cosmic_sync_server::config::settings::ServerConfig::default();
-    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg).await.unwrap();
+    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg)
+        .await
+        .unwrap();
     let handler = DeviceHandler::new(app_state.into());
 
     let long_device_hash = "a".repeat(129);
@@ -77,14 +83,19 @@ async fn test_register_device_too_long_device_hash() {
     let inner = response.into_inner();
 
     assert!(!inner.success);
-    assert_eq!(inner.return_message, "Device hash too long (max 128 characters)");
+    assert_eq!(
+        inner.return_message,
+        "Device hash too long (max 128 characters)"
+    );
 }
 
 #[tokio::test]
 async fn test_register_device_empty_auth_token() {
     let storage = Arc::new(MemoryStorage::new());
     let server_cfg = cosmic_sync_server::config::settings::ServerConfig::default();
-    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg).await.unwrap();
+    let app_state = AppState::new_with_storage_and_server_config(storage, &server_cfg)
+        .await
+        .unwrap();
     let handler = DeviceHandler::new(app_state.into());
 
     let request = Request::new(RegisterDeviceRequest {

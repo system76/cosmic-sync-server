@@ -1,22 +1,22 @@
 pub mod account;
+pub mod auth;
 pub mod device;
 pub mod file;
 pub mod watcher;
-pub mod auth;
 
 // re-export types from parent modules
 pub use account::{Account, SimpleAuthToken};
+pub use auth::AuthToken;
 pub use device::{Device, DeviceInfo};
-pub use file::{FileInfo, SyncFile, FileData};
+pub use file::{FileData, FileInfo, SyncFile};
 pub use watcher::{
-    WatcherGroup, Watcher, WatcherGroupData, WatcherData, WatcherPreset,
-    WatcherGroupInfo, WatcherInfo, WatcherDirectory, WatcherCondition as WatcherConditionEnum,
-    Condition, ConditionData, WatcherCondition, ConditionType
-};
-pub use auth::AuthToken;  // use AuthToken from auth.rs
+    Condition, ConditionData, ConditionType, Watcher, WatcherCondition as WatcherConditionEnum,
+    WatcherCondition, WatcherData, WatcherDirectory, WatcherGroup, WatcherGroupData,
+    WatcherGroupInfo, WatcherInfo, WatcherPreset,
+}; // use AuthToken from auth.rs
 
 // timestamp related utility functions - move to utils::time
-pub use crate::utils::time::{timestamp_to_datetime, datetime_to_timestamp};
+pub use crate::utils::time::{datetime_to_timestamp, timestamp_to_datetime};
 
 pub use device::*;
 pub use file::*;

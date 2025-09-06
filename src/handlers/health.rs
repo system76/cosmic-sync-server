@@ -1,11 +1,9 @@
-use tonic::{Request, Response, Status};
+use crate::handlers::HealthHandler;
+use crate::server::service::SyncServiceImpl;
+use crate::sync::{HealthCheckRequest, HealthCheckResponse};
 use actix_web::{web, HttpResponse, Result as ActixResult};
 use serde_json::json;
-use crate::sync::{
-    HealthCheckRequest, HealthCheckResponse,
-};
-use crate::server::service::SyncServiceImpl;
-use crate::handlers::HealthHandler;
+use tonic::{Request, Response, Status};
 use tracing::info;
 
 #[tonic::async_trait]
@@ -16,13 +14,13 @@ impl HealthHandler for SyncServiceImpl {
         request: Request<HealthCheckRequest>,
     ) -> Result<Response<HealthCheckResponse>, Status> {
         info!("HealthCheck request received");
-        
+
         // Create response with status "SERVING" and package version
         let reply = HealthCheckResponse {
             status: "SERVING".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         };
-        
+
         Ok(Response::new(reply))
     }
 }
@@ -53,4 +51,4 @@ pub async fn liveness_check() -> ActixResult<HttpResponse> {
         "version": env!("CARGO_PKG_VERSION"),
         "timestamp": chrono::Utc::now().to_rfc3339()
     })))
-} 
+}

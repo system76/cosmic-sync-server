@@ -1,8 +1,6 @@
-pub mod upload;
-pub mod download;
-pub mod list;
 pub mod delete;
-pub mod find;
+pub mod download;
 pub mod exists;
-
-
+pub mod find;
+pub mod list;
+pub mod upload;

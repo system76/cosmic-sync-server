@@ -1,8 +1,8 @@
 // Common test helpers for integration tests (English only in code)
 
-use std::sync::Arc;
 use cosmic_sync_server::server::app_state::AppState;
 use cosmic_sync_server::storage::memory::MemoryStorage;
+use std::sync::Arc;
 
 pub async fn app_state_with_memory() -> Arc<AppState> {
     let storage = Arc::new(MemoryStorage::new());

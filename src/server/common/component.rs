@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 /// Component status enumeration
@@ -85,4 +85,4 @@ pub trait Component: Send + Sync + Debug + 'static {
         }
         self.start().await
     }
-} 
+}

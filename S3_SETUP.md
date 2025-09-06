@@ -16,7 +16,7 @@ S3를 사용하기 위해서는 AWS 자격 증명을 설정해야 합니다. 다
 export AWS_REGION=us-east-2
 export AWS_ACCESS_KEY_ID=your_access_key_id
 export AWS_SECRET_ACCESS_KEY=your_secret_access_key
-export S3_BUCKET=cosmic-sync-files
+export AWS_S3_BUCKET=cosmic-sync-files
 ```
 
 ### 방법 2: AWS Credentials 파일 사용
@@ -77,7 +77,7 @@ S3 버킷에 대해 다음 권한이 필요합니다:
 환경 변수를 설정한 후 서버를 실행:
 
 ```bash
-sudo -E /home/yongjinchong/.cargo/bin/cargo run --bin cosmic-sync-server
+cargo run --bin cosmic-sync-server
 ```
 
 ## 문제 해결

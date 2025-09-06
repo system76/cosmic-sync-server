@@ -1,10 +1,7 @@
 // Domain events - Events that occur within the domain
 
-use serde::{Serialize, Deserialize};
-use crate::{
-    domain::DomainEvent,
-    error::Result,
-};
+use crate::{domain::DomainEvent, error::Result};
+use serde::{Deserialize, Serialize};
 
 /// Base event structure that all domain events should implement
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +61,7 @@ impl DomainEvent for AccountDomainEvent {
             AccountDomainEvent::AccountReactivated { .. } => "account.reactivated",
         }
     }
-    
+
     fn timestamp(&self) -> i64 {
         match self {
             AccountDomainEvent::AccountCreated { base, .. } => base.timestamp,
@@ -73,7 +70,7 @@ impl DomainEvent for AccountDomainEvent {
             AccountDomainEvent::AccountReactivated { base, .. } => base.timestamp,
         }
     }
-    
+
     fn event_id(&self) -> String {
         match self {
             AccountDomainEvent::AccountCreated { base, .. } => base.event_id.clone(),
@@ -121,7 +118,7 @@ impl DomainEvent for DeviceDomainEvent {
             DeviceDomainEvent::DeviceNameUpdated { .. } => "device.name_updated",
         }
     }
-    
+
     fn timestamp(&self) -> i64 {
         match self {
             DeviceDomainEvent::DeviceRegistered { base, .. } => base.timestamp,
@@ -130,7 +127,7 @@ impl DomainEvent for DeviceDomainEvent {
             DeviceDomainEvent::DeviceNameUpdated { base, .. } => base.timestamp,
         }
     }
-    
+
     fn event_id(&self) -> String {
         match self {
             DeviceDomainEvent::DeviceRegistered { base, .. } => base.event_id.clone(),
@@ -191,7 +188,7 @@ impl DomainEvent for FileSyncEvent {
             FileSyncEvent::FileSyncCompleted { .. } => "file.sync_completed",
         }
     }
-    
+
     fn timestamp(&self) -> i64 {
         match self {
             FileSyncEvent::FileUploaded { base, .. } => base.timestamp,
@@ -201,7 +198,7 @@ impl DomainEvent for FileSyncEvent {
             FileSyncEvent::FileSyncCompleted { base, .. } => base.timestamp,
         }
     }
-    
+
     fn event_id(&self) -> String {
         match self {
             FileSyncEvent::FileUploaded { base, .. } => base.event_id.clone(),
@@ -229,7 +226,7 @@ impl DomainEvent for DomainEventWrapper {
             DomainEventWrapper::FileSync(event) => event.event_type(),
         }
     }
-    
+
     fn timestamp(&self) -> i64 {
         match self {
             DomainEventWrapper::Account(event) => event.timestamp(),
@@ -237,7 +234,7 @@ impl DomainEvent for DomainEventWrapper {
             DomainEventWrapper::FileSync(event) => event.timestamp(),
         }
     }
-    
+
     fn event_id(&self) -> String {
         match self {
             DomainEventWrapper::Account(event) => event.event_id(),
@@ -252,16 +249,17 @@ impl DomainEvent for DomainEventWrapper {
 pub trait EventStore: Send + Sync {
     /// Save a domain event
     async fn save_event(&self, event: DomainEventWrapper) -> Result<()>;
-    
+
     /// Get events for a specific aggregate
-    async fn get_events_for_aggregate(&self, aggregate_id: &str) -> Result<Vec<DomainEventWrapper>>;
-    
+    async fn get_events_for_aggregate(&self, aggregate_id: &str)
+        -> Result<Vec<DomainEventWrapper>>;
+
     /// Get events by type
     async fn get_events_by_type(&self, event_type: &str) -> Result<Vec<DomainEventWrapper>>;
-    
+
     /// Get events within a time range
     async fn get_events_in_range(&self, from: i64, to: i64) -> Result<Vec<DomainEventWrapper>>;
-    
+
     /// Get latest events with limit
     async fn get_latest_events(&self, limit: usize) -> Result<Vec<DomainEventWrapper>>;
 }
@@ -271,7 +269,7 @@ pub trait EventStore: Send + Sync {
 pub trait EventPublisher: Send + Sync {
     /// Publish a domain event
     async fn publish(&self, event: DomainEventWrapper) -> Result<()>;
-    
+
     /// Publish multiple events in batch
     async fn publish_batch(&self, events: Vec<DomainEventWrapper>) -> Result<()>;
 }
@@ -288,12 +286,15 @@ impl EventHandlerRegistry {
             handlers: std::collections::HashMap::new(),
         }
     }
-    
+
     /// Register a handler for a specific event type
     pub fn register_handler(&mut self, event_type: String, handler: Box<dyn EventHandler>) {
-        self.handlers.entry(event_type).or_insert_with(Vec::new).push(handler);
+        self.handlers
+            .entry(event_type)
+            .or_insert_with(Vec::new)
+            .push(handler);
     }
-    
+
     /// Handle an event by calling all registered handlers
     pub async fn handle_event(&self, event: &DomainEventWrapper) -> Result<()> {
         let event_type = event.event_type();
@@ -311,10 +312,10 @@ impl EventHandlerRegistry {
 pub trait EventHandler: Send + Sync {
     /// Handle a domain event
     async fn handle(&self, event: &DomainEventWrapper) -> Result<()>;
-    
+
     /// Get the event types this handler can process
     fn event_types(&self) -> Vec<&'static str>;
-    
+
     /// Get handler name for logging/debugging
     fn name(&self) -> &'static str;
 }
@@ -324,13 +325,13 @@ pub trait EventHandler: Send + Sync {
 pub trait EventProjection: Send + Sync {
     /// Apply an event to update the projection
     async fn apply_event(&mut self, event: &DomainEventWrapper) -> Result<()>;
-    
+
     /// Get the current state of the projection
     async fn get_state(&self) -> Result<serde_json::Value>;
-    
+
     /// Reset the projection to initial state
     async fn reset(&mut self) -> Result<()>;
-    
+
     /// Get projection name
     fn name(&self) -> &'static str;
 }
@@ -342,7 +343,7 @@ mod tests {
     #[test]
     fn test_base_event_creation() {
         let event = BaseEvent::new("test.event".to_string(), "aggregate-123".to_string());
-        
+
         assert_eq!(event.event_type, "test.event");
         assert_eq!(event.aggregate_id, "aggregate-123");
         assert_eq!(event.version, 1);
@@ -359,7 +360,7 @@ mod tests {
             email: "test@example.com".to_string(),
             account_hash: "hash123".to_string(),
         };
-        
+
         assert_eq!(event.event_type(), "account.created");
         assert!(!event.event_id().is_empty());
         assert!(event.timestamp() > 0);
@@ -375,9 +376,9 @@ mod tests {
             device_name: "Test Device".to_string(),
             device_type: "Desktop".to_string(),
         };
-        
+
         let wrapper = DomainEventWrapper::Device(device_event);
-        
+
         assert_eq!(wrapper.event_type(), "device.registered");
         assert!(!wrapper.event_id().is_empty());
         assert!(wrapper.timestamp() > 0);
