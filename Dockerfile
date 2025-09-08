@@ -36,8 +36,8 @@ COPY src ./src
 #COPY crates ./crates
 
 # Build the application
-RUN cargo build --release
-# RUN cargo build --release --bin cosmic-sync-server
+# RUN cargo build --release
+RUN cargo build --release --bin cosmic-sync-server
 # Runtime stage
 FROM debian:bookworm-slim
 
