@@ -2,7 +2,6 @@ use cosmic_sync_server::config::constants;
 use cosmic_sync_server::config::settings::LoggingConfig;
 use dotenv::dotenv;
 use std::env;
-use std::sync::Arc;
 use tracing::{error, info, instrument, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

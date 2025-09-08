@@ -51,7 +51,6 @@ pub async fn start_server(config: ServerConfig) -> Result<()> {
     } else {
         tracing::info!("Effective storage_path: <none> (memory fallback if not set)");
     }
-
     // Run servers with graceful shutdown
     tokio::select! {
         result = grpc_server => {
