@@ -1,5 +1,5 @@
 # Multi-stage build for Rust gRPC server
-FROM rust:1.75-slim as builder
+FROM rust:1.75-slim AS builder
 
 # Build arguments
 ARG VCS_REF
@@ -32,7 +32,7 @@ RUN rm src/main.rs
 
 # Copy source code and crates
 COPY src ./src
-COPY crates ./crates
+#COPY crates ./crates
 
 # Build the application
 RUN cargo build --release
@@ -44,7 +44,6 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
-    libmysqlclient21 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
