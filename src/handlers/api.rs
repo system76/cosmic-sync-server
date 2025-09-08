@@ -26,4 +26,4 @@ pub async fn api_status() -> Result<HttpResponse> {
         "status": "healthy",
         "timestamp": chrono::Utc::now().to_rfc3339()
     })))
-} 
+}

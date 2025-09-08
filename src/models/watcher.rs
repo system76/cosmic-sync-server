@@ -1,36 +1,36 @@
+use crate::sync;
+use crate::utils::time::timestamp_serde;
+use crate::utils::time::{datetime_to_timestamp, timestamp_to_datetime};
 use chrono::{DateTime, Utc};
+use prost_types::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::sync;
-use prost_types::Timestamp;
-use crate::utils::time::{timestamp_to_datetime, datetime_to_timestamp};
-use crate::utils::time::timestamp_serde;
 
 /// watcher group info (DB model)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WatcherGroup {
-    pub id: i32, // Primary Key (server generated)
+    pub id: i32,       // Primary Key (server generated)
     pub group_id: i32, // client group ID
     pub account_hash: String,
-    pub title: String, // group title
+    pub title: String,             // group title
     pub created_at: DateTime<Utc>, // creation time
     pub updated_at: DateTime<Utc>, // last updated time
-    pub is_active: bool, // active status
-    pub watcher_ids: Vec<i32>, // watcher ID list
+    pub is_active: bool,           // active status
+    pub watcher_ids: Vec<i32>,     // watcher ID list
 }
 
 /// watcher condition info (DB model)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WatcherCondition {
-    pub id: Option<i64>,           // Primary Key (None for new records)
-    pub account_hash: String,      // account hash (required for security and user identification)
-    pub watcher_id: i32,           // FK to Watcher (server DB ID)
-    pub local_watcher_id: i32,     // client-side watcher ID (for sync)
-    pub local_group_id: i32,       // client-side group ID
+    pub id: Option<i64>,               // Primary Key (None for new records)
+    pub account_hash: String, // account hash (required for security and user identification)
+    pub watcher_id: i32,      // FK to Watcher (server DB ID)
+    pub local_watcher_id: i32, // client-side watcher ID (for sync)
+    pub local_group_id: i32,  // client-side group ID
     pub condition_type: ConditionType, // union or subtract
-    pub key: String,               // condition key (e.g., "extension", "filename")
-    pub value: Vec<String>,        // condition values as array (e.g., ["json", "yaml"])
-    pub operator: String,          // operator (default: "equals")
+    pub key: String,          // condition key (e.g., "extension", "filename")
+    pub value: Vec<String>,   // condition values as array (e.g., ["json", "yaml"])
+    pub operator: String,     // operator (default: "equals")
     pub created_at: DateTime<Utc>, // creation time
     pub updated_at: DateTime<Utc>, // last updated time
 }
@@ -53,7 +53,7 @@ impl std::fmt::Display for ConditionType {
 
 impl std::str::FromStr for ConditionType {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "union" => Ok(ConditionType::Union),
@@ -66,11 +66,11 @@ impl std::str::FromStr for ConditionType {
 /// individual watcher info (DB model)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Watcher {
-    pub id: i32,                // DB PK (server generated)
-    pub watcher_id: i32,        // client watcher ID
-    pub account_hash: String, 
-    pub group_id: i32,          // FK to WatcherGroup
-    pub local_group_id: i32,    // client group ID
+    pub id: i32,         // DB PK (server generated)
+    pub watcher_id: i32, // client watcher ID
+    pub account_hash: String,
+    pub group_id: i32,       // FK to WatcherGroup
+    pub local_group_id: i32, // client group ID
     pub title: String,
     pub folder: String,
     pub union_conditions: Vec<Condition>,
@@ -79,8 +79,8 @@ pub struct Watcher {
     pub preset: bool,
     pub custom_type: String,
     pub update_mode: String,
-    pub is_active: bool,        // Whether the watcher is active
-    pub extra_json: String,     // Additional JSON data for watcher configuration
+    pub is_active: bool,           // Whether the watcher is active
+    pub extra_json: String,        // Additional JSON data for watcher configuration
     pub created_at: DateTime<Utc>, // creation time
     pub updated_at: DateTime<Utc>, // last updated time
 }
@@ -142,7 +142,9 @@ impl From<&sync::WatcherGroupData> for WatcherGroupData {
         Self {
             group_id: proto.group_id,
             title: proto.title.clone(),
-            watchers: proto.watchers.iter()
+            watchers: proto
+                .watchers
+                .iter()
                 .map(|w| WatcherData::from(w))
                 .collect(),
             last_updated: proto.last_updated.clone().unwrap_or_else(|| Timestamp {
@@ -159,7 +161,9 @@ impl From<WatcherGroupData> for sync::WatcherGroupData {
         Self {
             group_id: model.group_id,
             title: model.title,
-            watchers: model.watchers.into_iter()
+            watchers: model
+                .watchers
+                .into_iter()
                 .map(|w| sync::WatcherData::from(&w))
                 .collect(),
             last_updated: Some(model.last_updated),
@@ -189,9 +193,9 @@ impl WatcherGroupData {
     // create WatcherGroup from proto message data
     pub fn create_watcher_group(&self, account_hash: String) -> WatcherGroup {
         let updated_at = timestamp_to_datetime(&self.last_updated);
-            
+
         WatcherGroup {
-            id: 0, // server generated
+            id: 0,                   // server generated
             group_id: self.group_id, // client group ID
             account_hash,
             title: self.title.clone(),
@@ -241,13 +245,17 @@ impl From<&sync::WatcherData> for WatcherData {
         Self {
             watcher_id: proto.watcher_id,
             folder: proto.folder.clone(),
-            union_conditions: proto.union_conditions.iter()
+            union_conditions: proto
+                .union_conditions
+                .iter()
                 .map(|c| ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),
                 })
                 .collect(),
-            subtracting_conditions: proto.subtracting_conditions.iter()
+            subtracting_conditions: proto
+                .subtracting_conditions
+                .iter()
                 .map(|c| ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),
@@ -268,13 +276,17 @@ impl From<sync::WatcherData> for WatcherData {
         Self {
             watcher_id: proto.watcher_id,
             folder: proto.folder,
-            union_conditions: proto.union_conditions.into_iter()
+            union_conditions: proto
+                .union_conditions
+                .into_iter()
                 .map(|c| ConditionData {
                     key: c.key,
                     value: c.value,
                 })
                 .collect(),
-            subtracting_conditions: proto.subtracting_conditions.into_iter()
+            subtracting_conditions: proto
+                .subtracting_conditions
+                .into_iter()
                 .map(|c| ConditionData {
                     key: c.key,
                     value: c.value,
@@ -296,13 +308,17 @@ impl From<&Watcher> for WatcherData {
         Self {
             watcher_id: watcher.watcher_id, // return watcher_id to client
             folder: watcher.folder.clone(),
-            union_conditions: watcher.union_conditions.iter()
+            union_conditions: watcher
+                .union_conditions
+                .iter()
                 .map(|c| ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),
                 })
                 .collect(),
-            subtracting_conditions: watcher.subtracting_conditions.iter()
+            subtracting_conditions: watcher
+                .subtracting_conditions
+                .iter()
                 .map(|c| ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),
@@ -324,13 +340,17 @@ impl From<&Watcher> for sync::WatcherData {
         Self {
             watcher_id: watcher.watcher_id, // return watcher_id to client
             folder: watcher.folder.clone(),
-            union_conditions: watcher.union_conditions.iter()
+            union_conditions: watcher
+                .union_conditions
+                .iter()
                 .map(|c| sync::ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),
                 })
                 .collect(),
-            subtracting_conditions: watcher.subtracting_conditions.iter()
+            subtracting_conditions: watcher
+                .subtracting_conditions
+                .iter()
                 .map(|c| sync::ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),
@@ -380,8 +400,8 @@ impl From<sync::WatcherGroupData> for WatcherGroup {
         };
 
         Self {
-            id: 0, // server generated
-            group_id: proto.group_id, // client group ID
+            id: 0,                        // server generated
+            group_id: proto.group_id,     // client group ID
             account_hash: "".to_string(), // this data is not in proto, need to set in client
             title: "".to_string(),
             created_at: Utc::now(),
@@ -398,7 +418,7 @@ impl From<sync::RegisterWatcherGroupRequest> for WatcherGroup {
         let now = Utc::now();
 
         Self {
-            id: 0, // server generated
+            id: 0,                  // server generated
             group_id: req.group_id, // client group ID
             account_hash: req.account_hash,
             title: req.title,
@@ -413,20 +433,24 @@ impl From<sync::RegisterWatcherGroupRequest> for WatcherGroup {
 impl From<WatcherData> for Watcher {
     fn from(data: WatcherData) -> Self {
         Self {
-            id: 0, // server generated
-            watcher_id: data.watcher_id, // client watcher ID
+            id: 0,                        // server generated
+            watcher_id: data.watcher_id,  // client watcher ID
             account_hash: "".to_string(), // this data is not in proto, need to set in client
-            group_id: 0, // this data is not in proto, need to set in client
-            local_group_id: 0,    // client group ID (for sync)
-            title: "".to_string(), // this data is not in proto, need to set in client
+            group_id: 0,                  // this data is not in proto, need to set in client
+            local_group_id: 0,            // client group ID (for sync)
+            title: "".to_string(),        // this data is not in proto, need to set in client
             folder: data.folder,
-            union_conditions: data.union_conditions.into_iter()
+            union_conditions: data
+                .union_conditions
+                .into_iter()
                 .map(|c| Condition {
                     key: c.key,
                     value: c.value,
                 })
                 .collect(),
-            subtracting_conditions: data.subtracting_conditions.into_iter()
+            subtracting_conditions: data
+                .subtracting_conditions
+                .into_iter()
                 .map(|c| Condition {
                     key: c.key,
                     value: c.value,
@@ -448,7 +472,7 @@ impl From<WatcherData> for Watcher {
 impl From<&sync::ConditionData> for ConditionData {
     fn from(proto: &sync::ConditionData) -> Self {
         Self {
-            key: proto.key.clone(), 
+            key: proto.key.clone(),
             value: proto.value.clone(),
         }
     }
@@ -486,13 +510,17 @@ impl From<&WatcherData> for sync::WatcherData {
         Self {
             watcher_id: data.watcher_id,
             folder: data.folder.clone(),
-            union_conditions: data.union_conditions.iter()
+            union_conditions: data
+                .union_conditions
+                .iter()
                 .map(|c| sync::ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),
                 })
                 .collect(),
-            subtracting_conditions: data.subtracting_conditions.iter()
+            subtracting_conditions: data
+                .subtracting_conditions
+                .iter()
                 .map(|c| sync::ConditionData {
                     key: c.key.clone(),
                     value: c.value.clone(),

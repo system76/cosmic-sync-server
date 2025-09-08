@@ -26,9 +26,9 @@ pub mod api;
 // Metrics handlers
 pub mod metrics;
 
-use tonic::{Request, Response, Status};
 use crate::sync::HealthCheckRequest;
 use crate::sync::HealthCheckResponse;
+use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
 pub trait HealthHandler {
@@ -38,6 +38,6 @@ pub trait HealthHandler {
     ) -> Result<Response<HealthCheckResponse>, Status>;
 }
 
-// OAuth handler  
+// OAuth handler
 pub mod oauth;
 pub use oauth::OAuthHandler;

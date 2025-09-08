@@ -1,58 +1,58 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
 
 /// Unified error type for the entire application
 #[derive(Debug, Error, Clone, Serialize, Deserialize)]
 pub enum SyncError {
     #[error("Storage error: {0}")]
     Storage(String),
-    
+
     #[error("Database error: {0}")]
     Database(String),
-    
+
     #[error("Configuration error: {0}")]
     Config(String),
-    
+
     #[error("Authentication error: {0}")]
     Authentication(String),
-    
+
     #[error("Authorization error: {0}")]
     Authorization(String),
-    
+
     #[error("Validation error: {0}")]
     Validation(String),
-    
+
     #[error("Network error: {0}")]
     Network(String),
-    
+
     #[error("Serialization error: {0}")]
     Serialization(String),
-    
+
     #[error("Not found: {0}")]
     NotFound(String),
-    
+
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
-    
+
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
-    
+
     #[error("Timeout: {0}")]
     Timeout(String),
-    
+
     #[error("Rate limit exceeded: {0}")]
     RateLimit(String),
-    
+
     #[error("Internal server error: {0}")]
     Internal(String),
-    
+
     #[error("External service error: {0}")]
     ExternalService(String),
-    
+
     #[error("File system error: {0}")]
     FileSystem(String),
-    
+
     #[error("Encryption error: {0}")]
     Encryption(String),
 }
@@ -68,37 +68,37 @@ impl SyncError {
     pub fn storage<T: Into<String>>(msg: T) -> Self {
         Self::Storage(msg.into())
     }
-    
+
     /// Create a new database error
     pub fn database<T: Into<String>>(msg: T) -> Self {
         Self::Database(msg.into())
     }
-    
+
     /// Create a new config error
     pub fn config<T: Into<String>>(msg: T) -> Self {
         Self::Config(msg.into())
     }
-    
+
     /// Create a new authentication error
     pub fn auth<T: Into<String>>(msg: T) -> Self {
         Self::Authentication(msg.into())
     }
-    
+
     /// Create a new validation error
     pub fn validation<T: Into<String>>(msg: T) -> Self {
         Self::Validation(msg.into())
     }
-    
+
     /// Create a new not found error
     pub fn not_found<T: Into<String>>(msg: T) -> Self {
         Self::NotFound(msg.into())
     }
-    
+
     /// Create a new internal error
     pub fn internal<T: Into<String>>(msg: T) -> Self {
         Self::Internal(msg.into())
     }
-    
+
     /// Get error category for metrics and logging
     pub fn category(&self) -> &'static str {
         match self {
@@ -121,17 +121,18 @@ impl SyncError {
             SyncError::Encryption(_) => "encryption",
         }
     }
-    
+
     /// Check if error is retryable
     pub fn is_retryable(&self) -> bool {
-        matches!(self, 
-            SyncError::Network(_) | 
-            SyncError::ServiceUnavailable(_) | 
-            SyncError::Timeout(_) |
-            SyncError::ExternalService(_)
+        matches!(
+            self,
+            SyncError::Network(_)
+                | SyncError::ServiceUnavailable(_)
+                | SyncError::Timeout(_)
+                | SyncError::ExternalService(_)
         )
     }
-    
+
     /// Get HTTP status code for this error
     pub fn http_status_code(&self) -> u16 {
         match self {
@@ -154,7 +155,7 @@ impl SyncError {
             SyncError::Encryption(_) => 500,
         }
     }
-    
+
     /// Convert to JSON for API responses
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
@@ -246,7 +247,7 @@ impl From<SyncError> for tonic::Status {
             SyncError::FileSystem(_) => tonic::Code::Internal,
             SyncError::Encryption(_) => tonic::Code::Internal,
         };
-        
+
         tonic::Status::new(code, error.to_string())
     }
 }
@@ -281,7 +282,7 @@ impl From<SyncError> for actix_web::Error {
             503 => actix_web::http::StatusCode::SERVICE_UNAVAILABLE,
             _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
         };
-        
+
         actix_web::error::InternalError::new(error.to_string(), status_code).into()
     }
 }
@@ -291,11 +292,11 @@ pub trait ErrorContext<T> {
     fn with_context<F>(self, f: F) -> Result<T>
     where
         F: FnOnce() -> String;
-    
+
     fn context(self, msg: &str) -> Result<T>;
 }
 
-impl<T, E> ErrorContext<T> for std::result::Result<T, E> 
+impl<T, E> ErrorContext<T> for std::result::Result<T, E>
 where
     E: Into<SyncError>,
 {
@@ -308,7 +309,7 @@ where
             SyncError::Internal(format!("{}: {}", f(), base_error))
         })
     }
-    
+
     fn context(self, msg: &str) -> Result<T> {
         self.with_context(|| msg.to_string())
     }
@@ -321,7 +322,7 @@ impl<T> ErrorContext<T> for Option<T> {
     {
         self.ok_or_else(|| SyncError::NotFound(f()))
     }
-    
+
     fn context(self, msg: &str) -> Result<T> {
         self.with_context(|| msg.to_string())
     }
