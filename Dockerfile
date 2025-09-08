@@ -22,12 +22,14 @@ COPY Cargo.toml Cargo.lock build.rs ./
 # Copy proto files for gRPC compilation
 COPY proto ./proto
 
-# Create a dummy main.rs to build dependencies
-RUN mkdir -p src && echo "fn main() {}" > src/main.rs
+# Create dummy sources to build dependencies (avoid missing lib.rs error)
+RUN mkdir -p src \
+    && echo "fn main() {}" > src/main.rs \
+    && echo "pub fn dummy() {}" > src/lib.rs
 
 # Build dependencies (this layer will be cached unless Cargo.toml changes)
 RUN cargo build --release
-RUN rm src/main.rs
+RUN rm -f src/main.rs src/lib.rs
 
 # Copy source code and crates
 COPY src ./src
