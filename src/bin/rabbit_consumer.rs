@@ -2,7 +2,8 @@ use tokio::signal;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use cosmic_sync_server::{config::settings::MessageBrokerConfig, RabbitMqEventBus};
+use crate::config::settings::MessageBrokerConfig;
+use crate::server::event_bus::RabbitMqEventBus;
 
 use lapin::{
     options::*,
@@ -306,15 +307,16 @@ async fn main() -> anyhow::Result<()> {
                         // Simple handler: try parse JSON, if parse fails, route to retry/dlq with attempts
                         let mut attempts = 0u32;
                         if let Some(headers) = delivery.properties.headers().as_ref() {
-                            if let Some(AMQPValue::LongInt(n)) =
-                                headers.inner().get("x-retry-count")
-                            {
-                                attempts = (*n).max(0) as u32;
-                            }
-                            if let Some(AMQPValue::LongUInt(n)) =
-                                headers.inner().get("x-retry-count")
-                            {
-                                attempts = *n as u32;
+                            if let Some(val) = headers.inner().get("x-retry-count") {
+                                match val {
+                                    AMQPValue::LongInt(n) => {
+                                        attempts = n.max(0) as u32;
+                                    }
+                                    AMQPValue::LongUInt(n) => {
+                                        attempts = *n as u32;
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
 
