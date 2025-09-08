@@ -39,13 +39,16 @@ pub use container::{
     StorageProvider,
 };
 
-pub use config::settings::{Config, DatabaseConfig, ServerConfig};
+pub use config::settings::{Config, DatabaseConfig, ServerConfig, MessageBrokerConfig};
 
 // Storage abstractions with performance traits
 pub use storage::{
     init_storage, memory::MemoryStorage, mysql::MySqlStorage, Result as StorageResult, Storage,
     StorageError,
 };
+
+// Event bus exports for consumers
+pub use server::event_bus::RabbitMqEventBus;
 
 // Model exports
 pub use models::{
