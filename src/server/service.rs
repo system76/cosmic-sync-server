@@ -869,10 +869,6 @@ impl SyncService for SyncServiceImpl {
         // 장치 검증
         let is_dev_mode = self.app_state.config.features.dev_mode;
         let is_test_mode = self.app_state.config.features.test_mode;
-<<<<<<< HEAD
-
-=======
->>>>>>> staging
         if !is_dev_mode && !is_test_mode {
             let is_valid_device = match self
                 .app_state
@@ -974,10 +970,6 @@ impl SyncService for SyncServiceImpl {
         // 장치 검증
         let is_dev_mode = self.app_state.config.features.dev_mode;
         let is_test_mode = self.app_state.config.features.test_mode;
-<<<<<<< HEAD
-
-=======
->>>>>>> staging
         if !is_dev_mode && !is_test_mode {
             let is_valid_device = match self
                 .app_state

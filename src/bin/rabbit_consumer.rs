@@ -2,7 +2,7 @@ use tokio::signal;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use cosmic_sync_server::{MessageBrokerConfig, RabbitMqEventBus};
+use cosmic_sync_server::{config::settings::MessageBrokerConfig, RabbitMqEventBus};
 
 use lapin::{
     options::*,
