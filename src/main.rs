@@ -2,25 +2,12 @@ use cosmic_sync_server::config::constants;
 use cosmic_sync_server::config::settings::LoggingConfig;
 use dotenv::dotenv;
 use std::env;
-use std::sync::Arc;
 use tracing::{error, info, instrument, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-<<<<<<< HEAD
-use cosmic_sync_server::config::constants;
-use cosmic_sync_server::config::settings::LoggingConfig;
-
-use cosmic_sync_server::{
-    server::startup::start_server,
-    config::{Config, Environment, ConfigLoader},
-    config::settings::{ServerConfig, DatabaseConfig, FeatureFlags, StorageConfig},
-    error::{Result, SyncError},
-    storage::init_storage,
-=======
 
 use cosmic_sync_server::{
     config::settings::{DatabaseConfig, FeatureFlags, ServerConfig, StorageConfig},
     config::{Config, ConfigLoader, Environment},
->>>>>>> 19a199c13fd9f5851074270388fa72e2254c92e9
     container::ContainerBuilder,
     error::{Result, SyncError},
     server::startup::{start_server, start_server_with_storage},
