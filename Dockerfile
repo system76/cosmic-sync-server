@@ -1,5 +1,5 @@
 # Multi-stage build for Rust gRPC server
-FROM rust:1.75-slim AS builder
+FROM rust:slim AS builder
 
 # Build arguments
 ARG VCS_REF
