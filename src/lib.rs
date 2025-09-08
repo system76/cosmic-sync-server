@@ -47,6 +47,9 @@ pub use storage::{
     StorageError,
 };
 
+// Event bus exports for consumers
+pub use server::event_bus::RabbitMqEventBus;
+
 // Model exports
 pub use models::{
     account::Account,

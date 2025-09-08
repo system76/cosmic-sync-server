@@ -1,5 +1,5 @@
 # Multi-stage build for Rust gRPC server
-FROM rust:1.75-slim as builder
+FROM rust:slim AS builder
 
 # Build arguments
 ARG VCS_REF
@@ -10,7 +10,6 @@ ARG VERSION
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
-    libmysqlclient-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
@@ -23,16 +22,18 @@ COPY Cargo.toml Cargo.lock build.rs ./
 # Copy proto files for gRPC compilation
 COPY proto ./proto
 
-# Create a dummy main.rs to build dependencies
-RUN mkdir -p src && echo "fn main() {}" > src/main.rs
+# Create dummy sources to build dependencies (avoid missing lib.rs error)
+RUN mkdir -p src \
+    && echo "fn main() {}" > src/main.rs \
+    && echo "pub fn dummy() {}" > src/lib.rs
 
 # Build dependencies (this layer will be cached unless Cargo.toml changes)
 RUN cargo build --release
-RUN rm src/main.rs
+RUN rm -f src/main.rs src/lib.rs
 
 # Copy source code and crates
 COPY src ./src
-COPY crates ./crates
+#COPY crates ./crates
 
 # Build the application
 RUN cargo build --release
@@ -44,7 +45,6 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
-    libmysqlclient21 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

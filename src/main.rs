@@ -11,7 +11,7 @@ use cosmic_sync_server::{
     config::{Config, ConfigLoader, Environment},
     container::ContainerBuilder,
     error::{Result, SyncError},
-    server::startup::start_server,
+    server::startup::{start_server, start_server_with_storage},
     storage::init_storage,
 };
 
@@ -128,7 +128,6 @@ fn init_tracing() -> Result<()> {
                 .with_line_number(false) // Disable for performance
                 .compact(),
         );
-
     // JSON logging for production (unified via LOG_FORMAT)
     if logging_cfg.format.to_lowercase() == "json" {
         let json_layer = tracing_subscriber::fmt::layer()
@@ -296,18 +295,6 @@ fn validate_server_config(config: &ServerConfig) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Start server with optimized storage layer
-async fn start_server_with_storage(
-    config: ServerConfig,
-    storage: Arc<dyn cosmic_sync_server::storage::Storage>,
-) -> Result<()> {
-    // Print startup banner
-    print_startup_banner(&config);
-
-    // Start server with storage dependency injection
-    cosmic_sync_server::server::startup::start_server_with_storage(config, storage).await
 }
 
 /// Print optimized startup banner

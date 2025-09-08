@@ -51,14 +51,6 @@ pub async fn start_server(config: ServerConfig) -> Result<()> {
     } else {
         tracing::info!("Effective storage_path: <none> (memory fallback if not set)");
     }
-    tracing::info!(
-        "Features: dev_mode={}, test_mode={}, metrics={}, request_validation={}, transport_encrypt_metadata={}",
-        app_state.config.features.dev_mode,
-        app_state.config.features.test_mode,
-        app_state.config.features.metrics_enabled,
-        app_state.config.features.request_validation,
-        app_state.config.features.transport_encrypt_metadata
-    );
 
     // Run servers with graceful shutdown
     tokio::select! {
