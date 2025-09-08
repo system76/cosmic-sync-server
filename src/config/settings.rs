@@ -124,7 +124,10 @@ impl ServerConfig {
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_HEARTBEAT_INTERVAL_SECS);
+<<<<<<< HEAD
 
+=======
+>>>>>>> staging
         Self {
             host,
             port,
@@ -285,7 +288,10 @@ impl LoggingConfig {
             .and_then(|b| b.parse::<usize>().ok())
             .unwrap_or(crate::config::constants::DEFAULT_LOG_MAX_BACKUPS);
         let format = env::var("LOG_FORMAT").unwrap_or_else(|_| "text".to_string());
+<<<<<<< HEAD
 
+=======
+>>>>>>> staging
         Self {
             level,
             file_logging,
@@ -354,7 +360,10 @@ impl FeatureFlags {
         let dev_mode = env::var("COSMIC_SYNC_DEV_MODE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
+<<<<<<< HEAD
 
+=======
+>>>>>>> staging
         Self {
             test_mode,
             debug_mode,

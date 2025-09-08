@@ -1,3 +1,14 @@
+<<<<<<< HEAD
+=======
+use cosmic_sync_server::config::constants;
+use cosmic_sync_server::config::settings::LoggingConfig;
+use dotenv::dotenv;
+use std::env;
+use std::sync::Arc;
+use tracing::{error, info, instrument, warn};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+<<<<<<< HEAD
+>>>>>>> staging
 use cosmic_sync_server::config::constants;
 use cosmic_sync_server::config::settings::LoggingConfig;
 use dotenv::dotenv;
@@ -7,8 +18,22 @@ use tracing::{error, info, instrument, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use cosmic_sync_server::{
+<<<<<<< HEAD
     config::settings::{DatabaseConfig, FeatureFlags, ServerConfig, StorageConfig},
     config::{Config, ConfigLoader, Environment},
+=======
+    server::startup::start_server,
+    config::{Config, Environment, ConfigLoader},
+    config::settings::{ServerConfig, DatabaseConfig, FeatureFlags, StorageConfig},
+    error::{Result, SyncError},
+    storage::init_storage,
+=======
+
+use cosmic_sync_server::{
+    config::settings::{DatabaseConfig, FeatureFlags, ServerConfig, StorageConfig},
+    config::{Config, ConfigLoader, Environment},
+>>>>>>> 19a199c13fd9f5851074270388fa72e2254c92e9
+>>>>>>> staging
     container::ContainerBuilder,
     error::{Result, SyncError},
     server::startup::start_server,
@@ -128,7 +153,10 @@ fn init_tracing() -> Result<()> {
                 .with_line_number(false) // Disable for performance
                 .compact(),
         );
+<<<<<<< HEAD
 
+=======
+>>>>>>> staging
     // JSON logging for production (unified via LOG_FORMAT)
     if logging_cfg.format.to_lowercase() == "json" {
         let json_layer = tracing_subscriber::fmt::layer()

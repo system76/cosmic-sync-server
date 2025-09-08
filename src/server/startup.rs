@@ -59,7 +59,6 @@ pub async fn start_server(config: ServerConfig) -> Result<()> {
         app_state.config.features.request_validation,
         app_state.config.features.transport_encrypt_metadata
     );
-
     // Run servers with graceful shutdown
     tokio::select! {
         result = grpc_server => {

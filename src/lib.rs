@@ -39,7 +39,7 @@ pub use container::{
     StorageProvider,
 };
 
-pub use config::settings::{Config, DatabaseConfig, ServerConfig, MessageBrokerConfig};
+pub use config::settings::{Config, DatabaseConfig, ServerConfig};
 
 // Storage abstractions with performance traits
 pub use storage::{

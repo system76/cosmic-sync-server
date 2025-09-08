@@ -869,7 +869,10 @@ impl SyncService for SyncServiceImpl {
         // 장치 검증
         let is_dev_mode = self.app_state.config.features.dev_mode;
         let is_test_mode = self.app_state.config.features.test_mode;
+<<<<<<< HEAD
 
+=======
+>>>>>>> staging
         if !is_dev_mode && !is_test_mode {
             let is_valid_device = match self
                 .app_state
@@ -971,7 +974,10 @@ impl SyncService for SyncServiceImpl {
         // 장치 검증
         let is_dev_mode = self.app_state.config.features.dev_mode;
         let is_test_mode = self.app_state.config.features.test_mode;
+<<<<<<< HEAD
 
+=======
+>>>>>>> staging
         if !is_dev_mode && !is_test_mode {
             let is_valid_device = match self
                 .app_state
@@ -1034,7 +1040,6 @@ impl SyncService for SyncServiceImpl {
 
         // 연결 상태 확인용 초기 메시지 전송 (PING 역할)
         let heartbeat_interval = self.app_state.config.server.heartbeat_interval_secs;
-
         // 클라이언트 연결 상태 모니터링을 위한 태스크
         let notification_manager_clone = self.app_state.notification_manager.clone();
         let sub_key_clone = sub_key.clone();
