@@ -118,13 +118,13 @@ The server will initialize the necessary tables when first started.
 
 ```bash
 # Build (prefer filtered lbuild)
-sudo -E /home/yongjinchong/.cargo/bin/cargo lbuild
+cargo lbuild
 
 # Run in development mode
 ./target/debug/cosmic-sync-server
 
 # Build and run in release mode
-sudo -E /home/yongjinchong/.cargo/bin/cargo build --release
+cargo build --release
 ./target/release/cosmic-sync-server
 ```
 
@@ -134,7 +134,7 @@ To run the server with specific environment variables and debug options:
 
 ```bash
 # Run with development mode, debug mode, and debug logging
-LOG_LEVEL=debug LOG_FORMAT=text sudo -E /home/yongjinchong/.cargo/bin/cargo run
+LOG_LEVEL=debug LOG_FORMAT=text cargo run
 
 # Run the compiled binary directly with root privileges
 LOG_LEVEL=debug LOG_FORMAT=text sudo -E ./target/debug/cosmic-sync-server
@@ -189,8 +189,8 @@ The MySQL implementation is split into multiple files for better maintainability
 ## Tests
 
 - Integration tests live in `tests/` with shared utilities in `tests/common/mod.rs`
-- Quick compile: `sudo -E /home/yongjinchong/.cargo/bin/cargo test --no-run`
-- Run: `sudo -E /home/yongjinchong/.cargo/bin/cargo test`
+- Quick compile: `cargo test --no-run`
+- Run: `cargo test`
 
 ## Development
 
@@ -199,7 +199,7 @@ The MySQL implementation is split into multiple files for better maintainability
 After modifying the Protocol Buffer definitions, run the following command to generate Rust code:
 
 ```bash
-sudo -E /home/yongjinchong/.cargo/bin/cargo build
+cargo build
 ```
 
 The `build.rs` script will automatically compile the protobuf files.

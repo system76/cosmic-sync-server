@@ -1,11 +1,10 @@
-use chrono::{DateTime, Utc, TimeZone, Timelike};
+use chrono::{DateTime, TimeZone, Timelike, Utc};
 use prost_types::Timestamp;
 use serde::{Deserialize, Deserializer, Serializer};
 
 /// Timestamp를 DateTime<Utc>로 변환
 pub fn timestamp_to_datetime(ts: &Timestamp) -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp(ts.seconds, ts.nanos as u32)
-        .unwrap_or_else(|| Utc::now())
+    DateTime::<Utc>::from_timestamp(ts.seconds, ts.nanos as u32).unwrap_or_else(|| Utc::now())
 }
 
 /// DateTime<Utc>를 Timestamp로 변환
@@ -24,13 +23,14 @@ pub fn datetime_to_mysql_string(dt: &DateTime<Utc>) -> String {
 /// Timestamp 직렬화/역직렬화 모듈
 pub mod timestamp_serde {
     use super::*;
-    use serde::{de};
-    
+    use serde::de;
+
     pub fn serialize<S>(timestamp: &Timestamp, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let dt = Utc.timestamp_opt(timestamp.seconds, timestamp.nanos as u32)
+        let dt = Utc
+            .timestamp_opt(timestamp.seconds, timestamp.nanos as u32)
             .single()
             .unwrap_or_else(|| Utc::now());
         serializer.serialize_str(&dt.to_rfc3339())
@@ -41,15 +41,15 @@ pub mod timestamp_serde {
         D: Deserializer<'de>,
     {
         let str_val = String::deserialize(deserializer)?;
-        
+
         let dt = DateTime::parse_from_rfc3339(&str_val)
             .map_err(|e| de::Error::custom(format!("Invalid timestamp format: {}", e)))?;
-        
+
         let ts = Timestamp {
             seconds: dt.timestamp(),
             nanos: dt.timestamp_subsec_nanos() as i32,
         };
-        
+
         Ok(ts)
     }
 }

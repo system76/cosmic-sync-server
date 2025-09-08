@@ -1,10 +1,10 @@
 //! Cache implementation for improved performance
 
+use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc, Duration};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry<T> {
@@ -17,14 +17,14 @@ impl<T> CacheEntry<T> {
     pub fn new(data: T, ttl: Option<Duration>) -> Self {
         let created_at = Utc::now();
         let expires_at = ttl.map(|duration| created_at + duration);
-        
+
         Self {
             data,
             created_at,
             expires_at,
         }
     }
-    
+
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             Utc::now() > expires_at
@@ -48,11 +48,11 @@ impl<T: Clone> MemoryCache<T> {
             default_ttl,
         }
     }
-    
+
     /// Get value from cache
     pub async fn get(&self, key: &str) -> Option<T> {
         let mut storage = self.storage.write().await;
-        
+
         if let Some(entry) = storage.get(key) {
             if entry.is_expired() {
                 storage.remove(key);
@@ -64,25 +64,25 @@ impl<T: Clone> MemoryCache<T> {
             None
         }
     }
-    
+
     /// Set value in cache with optional TTL
     pub async fn set(&self, key: String, value: T, ttl: Option<Duration>) {
         let mut storage = self.storage.write().await;
         let entry = CacheEntry::new(value, ttl.or(self.default_ttl));
         storage.insert(key, entry);
     }
-    
+
     /// Remove value from cache
     pub async fn remove(&self, key: &str) -> bool {
         let mut storage = self.storage.write().await;
         storage.remove(key).is_some()
     }
-    
+
     /// Clear all expired entries
     pub async fn cleanup_expired(&self) {
         let mut storage = self.storage.write().await;
         let now = Utc::now();
-        
+
         storage.retain(|_, entry| {
             if let Some(expires_at) = entry.expires_at {
                 now <= expires_at
@@ -91,13 +91,13 @@ impl<T: Clone> MemoryCache<T> {
             }
         });
     }
-    
+
     /// Get cache size
     pub async fn size(&self) -> usize {
         let storage = self.storage.read().await;
         storage.len()
     }
-    
+
     /// Clear all entries
     pub async fn clear(&self) {
         let mut storage = self.storage.write().await;
@@ -112,4 +112,4 @@ pub type FileMetadataCache = MemoryCache<crate::models::file::FileInfo>;
 pub type DeviceCache = MemoryCache<crate::models::device::Device>;
 
 /// Authentication token cache
-pub type AuthTokenCache = MemoryCache<crate::models::auth::AuthResult>; 
+pub type AuthTokenCache = MemoryCache<crate::models::auth::AuthResult>;

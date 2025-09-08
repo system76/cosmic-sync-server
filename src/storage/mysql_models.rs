@@ -4,8 +4,8 @@
 
 use chrono::{DateTime, Utc};
 use prost_types::Timestamp;
-use std::convert::TryFrom;
 use sqlx::FromRow;
+use std::convert::TryFrom;
 
 // 초(seconds) 값을 DateTime<Utc>로 변환
 pub fn datetime_from_seconds(seconds: i64) -> DateTime<Utc> {
@@ -14,10 +14,7 @@ pub fn datetime_from_seconds(seconds: i64) -> DateTime<Utc> {
 
 // i64 초 값을 Timestamp로 변환
 pub fn timestamp_from_seconds(seconds: i64) -> Timestamp {
-    Timestamp {
-        seconds,
-        nanos: 0,
-    }
+    Timestamp { seconds, nanos: 0 }
 }
 
 // DateTime<Utc>를 Timestamp로 변환
@@ -44,7 +41,7 @@ pub struct WatcherData {
 // 워처 그룹 데이터 모델 (스텁 구현)
 #[derive(Debug, Clone)]
 pub struct WatcherGroupData {
-    pub id: i32, 
+    pub id: i32,
     pub account_hash: String,
     pub device_hash: String,
     pub title: String,
@@ -89,9 +86,7 @@ pub fn convert_to_proto_watcher(data: &WatcherData) -> crate::sync::WatcherData 
 
 // WatcherGroupData에서 프로토버프 WatcherGroupData로 변환하는 함수 (스텁 구현)
 pub fn convert_to_proto_watcher_group(data: &WatcherGroupData) -> crate::sync::WatcherGroupData {
-    let proto_watchers = data.watchers.iter()
-        .map(convert_to_proto_watcher)
-        .collect();
+    let proto_watchers = data.watchers.iter().map(convert_to_proto_watcher).collect();
 
     crate::sync::WatcherGroupData {
         group_id: data.id,
@@ -105,7 +100,7 @@ pub fn convert_to_proto_watcher_group(data: &WatcherGroupData) -> crate::sync::W
 impl<'r> FromRow<'r, sqlx::mysql::MySqlRow> for WatcherData {
     fn from_row(row: &'r sqlx::mysql::MySqlRow) -> Result<Self, sqlx::Error> {
         use sqlx::Row;
-        
+
         Ok(WatcherData {
             id: row.try_get("id").unwrap_or(1),
             group_id: row.try_get("group_id").unwrap_or(1),
@@ -123,7 +118,7 @@ impl<'r> FromRow<'r, sqlx::mysql::MySqlRow> for WatcherData {
 impl<'r> FromRow<'r, sqlx::mysql::MySqlRow> for DeviceData {
     fn from_row(row: &'r sqlx::mysql::MySqlRow) -> Result<Self, sqlx::Error> {
         use sqlx::Row;
-        
+
         Ok(DeviceData {
             device_hash: row.try_get("device_hash").unwrap_or_default(),
             // 필요한 다른 필드들은 나중에 추가

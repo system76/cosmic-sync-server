@@ -1,10 +1,10 @@
 //! Connection state tracking for improved reconnection handling
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
 use tracing::{debug, info, warn};
 
 /// Connection state for a client
@@ -75,17 +75,22 @@ impl ConnectionTracker {
     pub async fn register_connection(&self, device_hash: String, account_hash: String) -> String {
         let connection_key = format!("{}:{}", account_hash, device_hash);
         let mut connections = self.connections.write().await;
-        
+
         if let Some(existing) = connections.get_mut(&connection_key) {
             existing.mark_reconnected();
-            info!("📡 Client reconnected: {} (connection #{} for {})", 
-                  device_hash, existing.connection_count, account_hash);
+            info!(
+                "📡 Client reconnected: {} (connection #{} for {})",
+                device_hash, existing.connection_count, account_hash
+            );
         } else {
             let state = ConnectionState::new(device_hash.clone(), account_hash.clone());
             connections.insert(connection_key.clone(), state);
-            info!("🔌 New client connected: {} for account {}", device_hash, account_hash);
+            info!(
+                "🔌 New client connected: {} for account {}",
+                device_hash, account_hash
+            );
         }
-        
+
         connection_key
     }
 
@@ -102,8 +107,10 @@ impl ConnectionTracker {
         let mut connections = self.connections.write().await;
         if let Some(state) = connections.get_mut(connection_key) {
             state.mark_disconnected();
-            info!("🔌❌ Client disconnected: {} for account {}", 
-                  state.device_hash, state.account_hash);
+            info!(
+                "🔌❌ Client disconnected: {} for account {}",
+                state.device_hash, state.account_hash
+            );
         }
     }
 
@@ -123,10 +130,14 @@ impl ConnectionTracker {
     }
 
     /// Get last disconnect time for recovery sync
-    pub async fn get_last_disconnect_time(&self, device_hash: &str, account_hash: &str) -> Option<DateTime<Utc>> {
+    pub async fn get_last_disconnect_time(
+        &self,
+        device_hash: &str,
+        account_hash: &str,
+    ) -> Option<DateTime<Utc>> {
         let connection_key = format!("{}:{}", account_hash, device_hash);
         let connections = self.connections.read().await;
-        
+
         if let Some(state) = connections.get(&connection_key) {
             state.disconnected_at
         } else {
@@ -150,7 +161,7 @@ impl ConnectionTracker {
         let total = connections.len();
         let active = connections.values().filter(|s| s.is_active).count();
         let inactive = total - active;
-        
+
         ConnectionStats {
             total_connections: total,
             active_connections: active,
@@ -162,7 +173,7 @@ impl ConnectionTracker {
     pub async fn cleanup_old_connections(&self, max_age_hours: i64) {
         let cutoff = Utc::now() - chrono::Duration::hours(max_age_hours);
         let mut connections = self.connections.write().await;
-        
+
         let initial_count = connections.len();
         connections.retain(|_, state| {
             if let Some(disconnected_at) = state.disconnected_at {
@@ -171,13 +182,13 @@ impl ConnectionTracker {
                 true // Keep active connections
             }
         });
-        
+
         let removed = initial_count - connections.len();
         if removed > 0 {
             info!("🧹 Cleaned up {} old connection records", removed);
         }
     }
-    
+
     /// Get total number of active connections (for all accounts)
     pub async fn get_total_active_connections(&self) -> usize {
         let connections = self.connections.read().await;
@@ -197,4 +208,4 @@ impl Default for ConnectionTracker {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

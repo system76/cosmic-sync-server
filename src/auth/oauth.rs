@@ -1,20 +1,23 @@
-use tracing::{debug, error, info, warn};
-use reqwest::Client;
-use serde::Deserialize;
-use crate::{
-    models::auth::AuthToken,
-    models::account::Account,
-    storage::Storage,
-    utils::crypto::{generate_account_hash_from_email, generate_account_hash_from_email_only, test_account_hash_generation, generate_encryption_key},
-};
-use uuid::Uuid;
-use sha2::{Sha256, Digest};
-use rand::{RngCore, rngs::OsRng};
-use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use hex;
 use crate::auth::token::{generate_auth_token, generate_state_token};
 use crate::auth::{AuthError, Result};
+use crate::{
+    models::account::Account,
+    models::auth::AuthToken,
+    storage::Storage,
+    utils::crypto::{
+        generate_account_hash_from_email, generate_account_hash_from_email_only,
+        generate_encryption_key, test_account_hash_generation,
+    },
+};
+use chrono::{DateTime, Utc};
+use hex;
+use rand::{rngs::OsRng, RngCore};
+use reqwest::Client;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 // OAuth token response structure
 #[derive(Debug, Deserialize)]
@@ -100,30 +103,29 @@ pub struct OAuthService {
 impl OAuthService {
     /// create new OAuth service
     pub fn new(storage: Arc<dyn Storage>) -> Self {
-        let client_id = std::env::var("OAUTH_CLIENT_ID")
-            .unwrap_or_else(|_| "cosmic-sync".to_string());
-            
+        let client_id =
+            std::env::var("OAUTH_CLIENT_ID").unwrap_or_else(|_| "cosmic-sync".to_string());
+
         let client_secret = std::env::var("OAUTH_CLIENT_SECRET")
             .unwrap_or_else(|_| "cosmicsecretsocmicsecret".to_string());
-            
+
         let redirect_uri = std::env::var("OAUTH_REDIRECT_URI")
             .unwrap_or_else(|_| "http://localhost:8080/oauth/callback".to_string());
-            
+
         let auth_url = std::env::var("OAUTH_AUTH_URL")
             .unwrap_or_else(|_| "https://localhost:4000/oauth/authorize".to_string());
-            
+
         let token_url = std::env::var("OAUTH_TOKEN_URL")
             .unwrap_or_else(|_| "https://localhost:4000/oauth/token".to_string());
-            
+
         let user_info_url = std::env::var("OAUTH_USER_INFO_URL")
             .unwrap_or_else(|_| "https://localhost:4000/userinfo".to_string());
-            
-        let scope = std::env::var("OAUTH_SCOPE")
-            .unwrap_or_else(|_| "profile:read".to_string());
-        
+
+        let scope = std::env::var("OAUTH_SCOPE").unwrap_or_else(|_| "profile:read".to_string());
+
         debug!("OAuth service initialized");
-        
-        Self { 
+
+        Self {
             storage,
             client_id,
             client_secret,
@@ -147,52 +149,63 @@ impl OAuthService {
     pub fn get_redirect_uri(&self) -> &str {
         &self.redirect_uri
     }
-    
+
     /// System76 OAuth login URL
     pub fn generate_oauth_login_url(&self) -> String {
         // generate state token (CSRF prevention)
         let state = generate_state_token();
-        
+
         // Log the state token (session ID)
         info!("Generated OAuth login URL with session ID: {}", state);
-        
+
         // generate OAuth login URL
         format!(
             "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&state={}",
             self.auth_url, self.client_id, self.redirect_uri, self.scope, state
         )
     }
-    
+
     /// OAuth login URL with custom device_hash
     pub fn generate_oauth_login_url_with_device(&self, device_hash: &str) -> String {
-        info!("Generated OAuth login URL with custom device_hash: {}", device_hash);
-        format!("{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
-            self.auth_url, self.client_id, self.redirect_uri, self.scope, device_hash)
+        info!(
+            "Generated OAuth login URL with custom device_hash: {}",
+            device_hash
+        );
+        format!(
+            "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
+            self.auth_url, self.client_id, self.redirect_uri, self.scope, device_hash
+        )
     }
-    
+
     /// Hash a token for storage
     fn hash_token(&self, token: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         hex::encode(hasher.finalize())
     }
-    
+
     /// Get user info from external auth server using token
     async fn get_user_info_from_external_server(&self, token: &str) -> Result<OAuthUserInfo> {
         let client = Client::new();
         let auth_server_url = std::env::var("AUTH_SERVER_URL")
             .unwrap_or_else(|_| "http://localhost:4000".to_string());
-        
+
         // 응답 상태 코드에 따른 오류 처리 개선
         let response = match client
             .get(&format!("{}/api/user", auth_server_url))
             .header("Authorization", format!("Bearer {}", token))
             .send()
-            .await {
-                Ok(resp) => resp,
-                Err(e) => return Err(AuthError::ExternalServiceError(format!("Failed to connect to auth server: {}", e)))
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                return Err(AuthError::ExternalServiceError(format!(
+                    "Failed to connect to auth server: {}",
+                    e
+                )))
+            }
         };
-        
+
         // HTTP 상태 코드에 따른 명확한 오류 처리
         let status = response.status();
         if status.is_client_error() {
@@ -206,113 +219,153 @@ impl OAuthService {
                 status
             )));
         }
-        
-        let response_text = response.text().await
-            .map_err(|e| AuthError::ExternalServiceError(format!("Failed to read response: {}", e)))?;
-        
+
+        let response_text = response.text().await.map_err(|e| {
+            AuthError::ExternalServiceError(format!("Failed to read response: {}", e))
+        })?;
+
         info!("📋 Settings API response: {}", response_text);
-        
+
         // Try to parse the response
         match serde_json::from_str::<System76UserSettings>(&response_text) {
             Ok(settings) => {
                 // 사용자 데이터가 없는 경우 명시적으로 처리
                 if settings.user.is_none() {
-                    return Err(AuthError::UserNotFound("User not found or not available".to_string()));
+                    return Err(AuthError::UserNotFound(
+                        "User not found or not available".to_string(),
+                    ));
                 }
-                
+
                 let user = match settings.user.as_ref() {
                     Some(u) => u,
-                    None => return Err(AuthError::UserNotFound("User not found or not available".to_string())),
+                    None => {
+                        return Err(AuthError::UserNotFound(
+                            "User not found or not available".to_string(),
+                        ))
+                    }
                 };
-                
+
                 // 필수 필드가 모두 있는지 확인
-                let user_id = user.email.clone()
-                    .ok_or_else(|| AuthError::MissingUserData("Email is required but not provided".to_string()))?;
-                    
+                let user_id = user.email.clone().ok_or_else(|| {
+                    AuthError::MissingUserData("Email is required but not provided".to_string())
+                })?;
+
                 let name = match (user.first_name.as_ref(), user.last_name.as_ref()) {
                     (Some(first), Some(last)) => format!("{} {}", first, last),
                     (Some(first), None) => first.clone(),
                     (None, Some(last)) => last.clone(),
                     _ => user_id.clone(),
                 };
-                
+
                 let id = user.id.map_or(user_id.clone(), |id| id.to_string());
-                
-                info!("✅ Successfully obtained user info: user_id={}, name={}", user_id, name);
+
+                info!(
+                    "✅ Successfully obtained user info: user_id={}, name={}",
+                    user_id, name
+                );
                 Ok(OAuthUserInfo { id, user_id, name })
-            },
+            }
             Err(e) => {
                 // 디버깅을 위한 더 많은 컨텍스트 추가
-                error!("Failed to parse user settings: {}, response: {}", e, response_text);
-                Err(AuthError::InvalidResponseFormat(format!("Failed to parse user info: {}", e)))
+                error!(
+                    "Failed to parse user settings: {}, response: {}",
+                    e, response_text
+                );
+                Err(AuthError::InvalidResponseFormat(format!(
+                    "Failed to parse user info: {}",
+                    e
+                )))
             }
         }
     }
-    
+
     /// validate token and return account hash
     pub async fn validate_token(&self, token: &str) -> Result<String> {
         if token.is_empty() {
             error!("❌ Token is empty");
             return Err(AuthError::InvalidToken("Token is empty".to_string()));
         }
-        
-        debug!("🔍 Validating auth token: token_prefix={}", &token[..std::cmp::min(10, token.len())]);
-        
+
+        debug!(
+            "🔍 Validating auth token: token_prefix={}",
+            &token[..std::cmp::min(10, token.len())]
+        );
+
         // Special handling for test tokens only (distinguish from real OAuth users)
         if cfg!(debug_assertions) && token == "test_token" {
             warn!("🧪 Special test token detected, returning test account hash");
             return Ok("test_account_hash".to_string());
         }
-        
+
         // Query token from storage
         match self.storage.get_auth_token(token).await {
             Ok(Some(token_obj)) => {
-                debug!("🔍 Token object found: account_hash={}, expires_at={}", 
-                       token_obj.account_hash, token_obj.expires_at);
-                
+                debug!(
+                    "🔍 Token object found: account_hash={}, expires_at={}",
+                    token_obj.account_hash, token_obj.expires_at
+                );
+
                 // Check token expiration
                 let now = Utc::now();
                 if token_obj.expires_at < now {
-                    error!("❌ Token has expired: expires_at={}, now={}", token_obj.expires_at, now);
+                    error!(
+                        "❌ Token has expired: expires_at={}, now={}",
+                        token_obj.expires_at, now
+                    );
                     return Err(AuthError::InvalidToken("Token has expired".to_string()));
                 }
-                
+
                 if !token_obj.is_valid {
-                    error!("❌ Token is deactivated: account_hash={}", token_obj.account_hash);
+                    error!(
+                        "❌ Token is deactivated: account_hash={}",
+                        token_obj.account_hash
+                    );
                     return Err(AuthError::InvalidToken("Token is deactivated".to_string()));
                 }
-                
-                debug!("✅ Token validation successful: account_hash={}", token_obj.account_hash);
+
+                debug!(
+                    "✅ Token validation successful: account_hash={}",
+                    token_obj.account_hash
+                );
                 Ok(token_obj.account_hash)
-            },
+            }
             Ok(None) => {
-                error!("❌ Token not found: token_prefix={}", &token[..std::cmp::min(10, token.len())]);
+                error!(
+                    "❌ Token not found: token_prefix={}",
+                    &token[..std::cmp::min(10, token.len())]
+                );
                 Err(AuthError::InvalidToken("Token not found".to_string()))
-            },
+            }
             Err(e) => {
                 error!("❌ Database error during token lookup: {}", e);
                 Err(AuthError::DatabaseError(e.to_string()))
             }
         }
     }
-    
+
     /// validate token and return result (used in handler)
     pub async fn verify_token(&self, token: &str) -> Result<VerificationResult> {
         match self.validate_token(token).await {
             Ok(account_hash) => {
-                debug!("✅ Token validation successful: account_hash={}", account_hash);
-                
+                debug!(
+                    "✅ Token validation successful: account_hash={}",
+                    account_hash
+                );
+
                 // Check if account exists in local DB
                 match self.storage.get_account_by_hash(&account_hash).await {
                     Ok(Some(_)) => {
                         // Account exists, proceed normally
-                        debug!("✅ Account exists in local DB: account_hash={}", account_hash);
-                    },
+                        debug!(
+                            "✅ Account exists in local DB: account_hash={}",
+                            account_hash
+                        );
+                    }
                     Ok(None) => {
                         // Account doesn't exist in local DB, try to fetch from external auth server
                         info!("🔄 Account not found in local DB, attempting to fetch from external auth server: account_hash={}", account_hash);
-                        
-        // Try to get user info from external auth server using the token
+
+                        // Try to get user info from external auth server using the token
                         match self.get_user_info_from_external_server(token).await {
                             Ok(user_info) => {
                                 // Create account in local DB
@@ -321,10 +374,10 @@ impl OAuthService {
                                 } else {
                                     format!("{}@example.com", user_info.user_id)
                                 };
-                                
+
                                 // 중요: 외부 인증 서버의 계정 해시를 사용
                                 // 이 부분이 핵심입니다 - 클라이언트가 제공한 account_hash를 그대로 사용
-                                
+
                                 let now = Utc::now();
                                 let new_account = Account {
                                     account_hash: account_hash.clone(), // 클라이언트의 account_hash 사용
@@ -340,11 +393,11 @@ impl OAuthService {
                                     updated_at: now,
                                     last_login: now,
                                 };
-                                
+
                                 if let Err(e) = self.storage.create_account(&new_account).await {
                                     error!("❌ Failed to auto-create account: {}", e);
                                 }
-                            },
+                            }
                             Err(e) => {
                                 warn!("⚠️ Could not fetch user info from external server: {}. Proceeding with token validation anyway.", e);
                                 // 계속 진행 - 계정은 외부 서버에 있을 수 있음
@@ -355,39 +408,40 @@ impl OAuthService {
                         error!("❌ Error checking account existence: {}", e);
                     }
                 }
-                
+
                 Ok(VerificationResult {
                     valid: true,
                     account_hash,
                     expiry: None,
                 })
-            },
-            Err(_) => {
-                Ok(VerificationResult {
-                    valid: false,
-                    account_hash: String::new(),
-                    expiry: None,
-                })
             }
+            Err(_) => Ok(VerificationResult {
+                valid: false,
+                account_hash: String::new(),
+                expiry: None,
+            }),
         }
     }
-    
+
     /// exchange oauth code and authenticate
-    pub async fn exchange_oauth_code_and_authenticate(&self, code: &str) -> Result<(String, OAuthUserInfo)> {
+    pub async fn exchange_oauth_code_and_authenticate(
+        &self,
+        code: &str,
+    ) -> Result<(String, OAuthUserInfo)> {
         // 1. exchange code to access token
         let token = self.exchange_oauth_code(code).await?;
-        
+
         // 2. get user info with access token
         let user_info = self.get_user_info_with_token(&token).await?;
-        
+
         Ok((token, user_info))
     }
-    
+
     /// exchange oauth code to access token
     pub async fn exchange_oauth_code(&self, code: &str) -> Result<String> {
         // create http client
         let client = Client::new();
-        
+
         // token request parameters
         let params = [
             ("code", code),
@@ -396,7 +450,7 @@ impl OAuthService {
             ("redirect_uri", &self.redirect_uri),
             ("grant_type", "authorization_code"),
         ];
-        
+
         #[derive(Deserialize)]
         struct TokenResponse {
             access_token: String,
@@ -405,112 +459,146 @@ impl OAuthService {
             #[serde(default)]
             expires_in: Option<u64>,
         }
-        
+
         // send token request
         info!("🔄 Starting OAuth token exchange request");
-        
+
         // send token request to OAuth token URL
-        match client.post(&self.token_url)
-            .form(&params)
-            .send()
-            .await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        match response.json::<TokenResponse>().await {
-                            Ok(token_data) => {
-                                info!("✅ OAuth token exchange successful");
-                                Ok(token_data.access_token)
-                            },
-                            Err(e) => {
-                                error!("❌ Failed to parse OAuth token response: {}", e);
-                                Err(AuthError::ExternalServiceError(format!("Failed to parse token response: {}", e)))
-                            }
+        match client.post(&self.token_url).form(&params).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.json::<TokenResponse>().await {
+                        Ok(token_data) => {
+                            info!("✅ OAuth token exchange successful");
+                            Ok(token_data.access_token)
                         }
-                    } else {
-                        let status = response.status();
-                        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                        error!("❌ OAuth token exchange failed: {} - {}", status, error_text);
-                        Err(AuthError::ExternalServiceError(format!("OAuth token exchange failed: {} - {}", status, error_text)))
+                        Err(e) => {
+                            error!("❌ Failed to parse OAuth token response: {}", e);
+                            Err(AuthError::ExternalServiceError(format!(
+                                "Failed to parse token response: {}",
+                                e
+                            )))
+                        }
                     }
-                },
-                Err(e) => {
-                    error!("❌ Failed to send OAuth token request: {}", e);
-                    Err(AuthError::ExternalServiceError(format!("Failed to send token request: {}", e)))
+                } else {
+                    let status = response.status();
+                    let error_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    error!(
+                        "❌ OAuth token exchange failed: {} - {}",
+                        status, error_text
+                    );
+                    Err(AuthError::ExternalServiceError(format!(
+                        "OAuth token exchange failed: {} - {}",
+                        status, error_text
+                    )))
                 }
             }
+            Err(e) => {
+                error!("❌ Failed to send OAuth token request: {}", e);
+                Err(AuthError::ExternalServiceError(format!(
+                    "Failed to send token request: {}",
+                    e
+                )))
+            }
+        }
     }
-    
+
     /// get user info with access token
     async fn get_user_info_with_token(&self, access_token: &str) -> Result<OAuthUserInfo> {
         // create http client
         let client = Client::new();
-        
+
         info!("🔄 Starting user settings info request (/api/settings)");
-        
+
         // Request user settings information
-        match client.get(&self.user_info_url)
+        match client
+            .get(&self.user_info_url)
             .header("Authorization", format!("Bearer {}", access_token))
             .send()
-            .await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        // First check the response text
-                        let response_text = response.text().await.unwrap_or_else(|_| "Unable to read response".to_string());
-                        info!("📋 Settings API response: {}", response_text);
-                        
-                        // Try JSON parsing
-                        match serde_json::from_str::<System76UserSettings>(&response_text) {
-                            Ok(settings) => {
-                                // Extract user info from settings
-                                let user = settings.user.as_ref();
-                                
-                                // 이메일을 우선으로 user_id 설정
-                                let user_id = user.as_ref()
-                                    .and_then(|u| u.email.clone())
-                                    .unwrap_or_else(|| "unknown_user@example.com".to_string());
-                                
-                                // first_name과 last_name을 조합하여 이름 생성
-                                let name = user.as_ref()
-                                    .and_then(|u| {
-                                        match (u.first_name.as_ref(), u.last_name.as_ref()) {
-                                            (Some(first), Some(last)) => Some(format!("{} {}", first, last)),
-                                            (Some(first), None) => Some(first.clone()),
-                                            (None, Some(last)) => Some(last.clone()),
-                                            _ => None,
-                                        }
-                                    })
-                                    .unwrap_or(user_id.clone());
-                                
-                                // ID 설정
-                                let id = user.as_ref()
-                                    .map(|u| u.id.map_or_else(|| user_id.clone(), |id| id.to_string()))
-                                    .unwrap_or_else(|| user_id.clone());
-                                
-                                info!("✅ Successfully obtained user info: user_id={}, name={}", user_id, name);
-                                
-                                Ok(OAuthUserInfo {
-                                    id,
-                                    user_id,
-                                    name,
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    // First check the response text
+                    let response_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unable to read response".to_string());
+                    info!("📋 Settings API response: {}", response_text);
+
+                    // Try JSON parsing
+                    match serde_json::from_str::<System76UserSettings>(&response_text) {
+                        Ok(settings) => {
+                            // Extract user info from settings
+                            let user = settings.user.as_ref();
+
+                            // 이메일을 우선으로 user_id 설정
+                            let user_id = user
+                                .as_ref()
+                                .and_then(|u| u.email.clone())
+                                .unwrap_or_else(|| "unknown_user@example.com".to_string());
+
+                            // first_name과 last_name을 조합하여 이름 생성
+                            let name = user
+                                .as_ref()
+                                .and_then(|u| match (u.first_name.as_ref(), u.last_name.as_ref()) {
+                                    (Some(first), Some(last)) => {
+                                        Some(format!("{} {}", first, last))
+                                    }
+                                    (Some(first), None) => Some(first.clone()),
+                                    (None, Some(last)) => Some(last.clone()),
+                                    _ => None,
                                 })
-                            },
-                            Err(e) => {
-                                error!("❌ Failed to parse settings response: {}", e);
-                                Err(AuthError::ExternalServiceError(format!("Failed to parse settings response: {}", e)))
-                            }
+                                .unwrap_or(user_id.clone());
+
+                            // ID 설정
+                            let id = user
+                                .as_ref()
+                                .map(|u| u.id.map_or_else(|| user_id.clone(), |id| id.to_string()))
+                                .unwrap_or_else(|| user_id.clone());
+
+                            info!(
+                                "✅ Successfully obtained user info: user_id={}, name={}",
+                                user_id, name
+                            );
+
+                            Ok(OAuthUserInfo { id, user_id, name })
                         }
-                    } else {
-                        let status = response.status();
-                        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                        error!("❌ Settings info request failed: {} - {}", status, error_text);
-                        Err(AuthError::ExternalServiceError(format!("Failed to fetch settings: {} - {}", status, error_text)))
+                        Err(e) => {
+                            error!("❌ Failed to parse settings response: {}", e);
+                            Err(AuthError::ExternalServiceError(format!(
+                                "Failed to parse settings response: {}",
+                                e
+                            )))
+                        }
                     }
-                },
-                Err(e) => {
-                    error!("❌ Failed to send settings request: {}", e);
-                    Err(AuthError::ExternalServiceError(format!("Failed to send settings request: {}", e)))
+                } else {
+                    let status = response.status();
+                    let error_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    error!(
+                        "❌ Settings info request failed: {} - {}",
+                        status, error_text
+                    );
+                    Err(AuthError::ExternalServiceError(format!(
+                        "Failed to fetch settings: {} - {}",
+                        status, error_text
+                    )))
                 }
             }
+            Err(e) => {
+                error!("❌ Failed to send settings request: {}", e);
+                Err(AuthError::ExternalServiceError(format!(
+                    "Failed to send settings request: {}",
+                    e
+                )))
+            }
+        }
     }
 }
 
@@ -523,29 +611,37 @@ pub async fn process_oauth_code(
     info!("🚀 Starting process_oauth_code");
     info!("  OAuth code: {}", code);
     info!("  Client account_hash: {:?}", client_account_hash);
-    
+
     // 1. exchange oauth code to access token and get user info
-    let (_access_token, user_info) = match oauth_service.exchange_oauth_code_and_authenticate(code).await {
+    let (_access_token, user_info) = match oauth_service
+        .exchange_oauth_code_and_authenticate(code)
+        .await
+    {
         Ok(result) => {
             info!("✅ OAuth exchange successful");
             result
-        },
+        }
         Err(e) => {
             error!("❌ OAuth authentication failed: {}", e);
-            return Err(AuthError::ExternalServiceError(format!("OAuth authentication failed: {}", e)));
+            return Err(AuthError::ExternalServiceError(format!(
+                "OAuth authentication failed: {}",
+                e
+            )));
         }
     };
-    
-    info!("✅ User authentication completed: user_id={}, name={}, id={}", 
-         user_info.user_id, user_info.name, user_info.id);
-    
+
+    info!(
+        "✅ User authentication completed: user_id={}, name={}, id={}",
+        user_info.user_id, user_info.name, user_info.id
+    );
+
     // 2. 이메일 정규화
     let email = if user_info.user_id.contains('@') {
         user_info.user_id.clone()
     } else {
         format!("{}@example.com", user_info.user_id)
     };
-    
+
     // 3. account_hash 결정 로직 개선
     // 우선순위: 1) 클라이언트 제공 해시, 2) 이메일 기반 해시
     let account_hash = if let Some(client_hash) = client_account_hash {
@@ -557,51 +653,58 @@ pub async fn process_oauth_code(
         info!("🔑 Generated account_hash from email: {}", generated_hash);
         generated_hash
     };
-    
+
     // 4. 계정 조회 - 여러 해시 방식으로 시도
     let mut existing_account = None;
-    
+
     // 먼저 결정된 account_hash로 조회
-    match oauth_service.storage.get_account_by_hash(&account_hash).await {
+    match oauth_service
+        .storage
+        .get_account_by_hash(&account_hash)
+        .await
+    {
         Ok(Some(account)) => {
             info!("✅ Account found with primary hash: {}", account_hash);
             existing_account = Some(account);
-        },
+        }
         Ok(None) => {
             // 이메일로 계정 조회 시도
             match oauth_service.storage.get_account_by_email(&email).await {
                 Ok(Some(account)) => {
                     info!("✅ Account found by email: {}", email);
                     existing_account = Some(account);
-                },
+                }
                 Ok(None) => {
                     info!("ℹ️ No existing account found for email: {}", email);
-                },
+                }
                 Err(e) => {
                     error!("❌ Error checking account by email: {}", e);
                 }
             }
-        },
+        }
         Err(e) => {
             error!("❌ Error checking account by hash: {}", e);
         }
     }
-    
+
     // 5. 계정 생성 또는 업데이트
     let account_obj = if let Some(mut account) = existing_account {
         // 기존 계정이 있는 경우
         info!("🔄 Updating existing account: {}", account.account_hash);
-        
+
         // account_hash가 다른 경우 업데이트
         if account.account_hash != account_hash {
-            info!("🔄 Updating account_hash from {} to {}", account.account_hash, account_hash);
+            info!(
+                "🔄 Updating account_hash from {} to {}",
+                account.account_hash, account_hash
+            );
             account.account_hash = account_hash.clone();
         }
-        
+
         // 마지막 로그인 시간 업데이트
         account.last_login = Utc::now();
         account.updated_at = Utc::now();
-        
+
         // 계정 업데이트
         if let Err(e) = oauth_service.storage.update_account(&account).await {
             error!("❌ Error updating account: {}", e);
@@ -609,12 +712,15 @@ pub async fn process_oauth_code(
         } else {
             info!("✅ Account updated successfully");
         }
-        
+
         account
     } else {
         // 새 계정 생성
-        info!("✨ Creating new account: account_hash={}, email={}", account_hash, email);
-        
+        info!(
+            "✨ Creating new account: account_hash={}, email={}",
+            account_hash, email
+        );
+
         let now = Utc::now();
         let new_account = Account {
             account_hash: account_hash.clone(),
@@ -630,39 +736,51 @@ pub async fn process_oauth_code(
             updated_at: now,
             last_login: now,
         };
-        
+
         // 계정 저장 - 재시도 로직 포함
         let mut retry_count = 0;
         let max_retries = 3;
-        
+
         while retry_count < max_retries {
             match oauth_service.storage.create_account(&new_account).await {
                 Ok(_) => {
-                    info!("✅ New account created successfully: account_hash={}", account_hash);
-                    
+                    info!(
+                        "✅ New account created successfully: account_hash={}",
+                        account_hash
+                    );
+
                     // 계정 생성 확인
-                    match oauth_service.storage.get_account_by_hash(&account_hash).await {
+                    match oauth_service
+                        .storage
+                        .get_account_by_hash(&account_hash)
+                        .await
+                    {
                         Ok(Some(_)) => {
                             info!("✅ Account creation verified in database");
-                        },
+                        }
                         Ok(None) => {
                             error!("⚠️ Account not found after creation - may be a database sync issue");
-                        },
+                        }
                         Err(e) => {
                             error!("⚠️ Error verifying account creation: {}", e);
                         }
                     }
                     break;
-                },
+                }
                 Err(e) => {
-                    error!("❌ Failed to create account (attempt {}/{}): {}", retry_count + 1, max_retries, e);
-                    
+                    error!(
+                        "❌ Failed to create account (attempt {}/{}): {}",
+                        retry_count + 1,
+                        max_retries,
+                        e
+                    );
+
                     // Duplicate entry 에러인 경우 재시도하지 않음
                     if e.to_string().contains("Duplicate") {
                         info!("ℹ️ Account may already exist, proceeding anyway");
                         break;
                     }
-                    
+
                     retry_count += 1;
                     if retry_count < max_retries {
                         // 짧은 대기 후 재시도
@@ -671,13 +789,13 @@ pub async fn process_oauth_code(
                 }
             }
         }
-        
+
         new_account
     };
-    
+
     // 6. generate auth token
     let auth_token = generate_auth_token();
-    
+
     // Create and save auth token
     let token_obj = AuthToken {
         token_id: Uuid::new_v4().to_string(),
@@ -690,47 +808,62 @@ pub async fn process_oauth_code(
         is_valid: true,
         scope: None,
     };
-    
+
     // Save auth token with retry
     let mut retry_count = 0;
     let max_retries = 3;
-    
+
     while retry_count < max_retries {
         match oauth_service.storage.create_auth_token(&token_obj).await {
             Ok(_) => {
                 info!("✅ Auth token saved successfully");
                 break;
-            },
+            }
             Err(e) => {
-                error!("❌ Error saving auth token (attempt {}/{}): {}", retry_count + 1, max_retries, e);
+                error!(
+                    "❌ Error saving auth token (attempt {}/{}): {}",
+                    retry_count + 1,
+                    max_retries,
+                    e
+                );
                 retry_count += 1;
                 if retry_count < max_retries {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 } else {
-                    return Err(AuthError::DatabaseError(format!("Failed to save auth token after {} attempts", max_retries)));
+                    return Err(AuthError::DatabaseError(format!(
+                        "Failed to save auth token after {} attempts",
+                        max_retries
+                    )));
                 }
             }
         }
     }
-    
+
     // 7. generate or get user's encryption key
-    let encryption_key = match get_encryption_key(&account_hash, oauth_service.storage.clone()).await {
-        Ok(Some(key)) => key,
-        Ok(None) => {
-            info!("⚠️ No encryption key found, generating new one");
-            generate_encryption_key()
-        },
-        Err(e) => {
-            error!("⚠️ Failed to get encryption key: {}, generating new one", e);
-            generate_encryption_key()
-        }
-    };
-    
+    let encryption_key =
+        match get_encryption_key(&account_hash, oauth_service.storage.clone()).await {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                info!("⚠️ No encryption key found, generating new one");
+                generate_encryption_key()
+            }
+            Err(e) => {
+                error!("⚠️ Failed to get encryption key: {}, generating new one", e);
+                generate_encryption_key()
+            }
+        };
+
     info!("✅ OAuth process completed successfully");
-    info!("  Auth token: {}...", &auth_token[..10.min(auth_token.len())]);
+    info!(
+        "  Auth token: {}...",
+        &auth_token[..10.min(auth_token.len())]
+    );
     info!("  Account hash: {}", account_hash);
-    info!("  Encryption key: {}...", &encryption_key[..10.min(encryption_key.len())]);
-    
+    info!(
+        "  Encryption key: {}...",
+        &encryption_key[..10.min(encryption_key.len())]
+    );
+
     Ok((auth_token, account_hash, encryption_key))
 }
 
@@ -738,96 +871,125 @@ pub async fn process_oauth_code(
 pub async fn get_oauth_user_info(access_token: &str) -> Result<OAuthUserInfo> {
     // create http client
     let client = Client::new();
-    
+
     info!("🔄 Starting user settings info request (standalone function)");
-    
+
     // Get user info URL from environment variable
     let user_info_url = std::env::var("OAUTH_USER_INFO_URL")
         .unwrap_or_else(|_| "http://10.17.89.63:4000/api/settings".to_string());
-    
+
     // Request settings information
-    match client.get(&user_info_url)
+    match client
+        .get(&user_info_url)
         .header("Authorization", format!("Bearer {}", access_token))
         .send()
-        .await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    // Check response text
-                    let response_text = response.text().await.unwrap_or_else(|_| "Unable to read response".to_string());
-                    info!("📋 Settings API response (standalone): {}", response_text);
-                    
-                    // Try JSON parsing
-                    match serde_json::from_str::<System76UserSettings>(&response_text) {
-                        Ok(settings) => {
-                            // Extract user info from settings
-                            let user = settings.user.as_ref();
-                            
-                            // 이메일을 우선으로 user_id 설정
-                            let user_id = user.as_ref()
-                                .and_then(|u| u.email.clone())
-                                .unwrap_or_else(|| "unknown_user@example.com".to_string());
-                            
-                            // first_name과 last_name을 조합하여 이름 생성
-                            let name = user.as_ref()
-                                .and_then(|u| {
-                                    match (u.first_name.as_ref(), u.last_name.as_ref()) {
-                                        (Some(first), Some(last)) => Some(format!("{} {}", first, last)),
-                                        (Some(first), None) => Some(first.clone()),
-                                        (None, Some(last)) => Some(last.clone()),
-                                        _ => None,
-                                    }
-                                })
-                                .unwrap_or(user_id.clone());
-                            
-                            // ID 설정
-                            let id = user.as_ref()
-                                .map(|u| u.id.map_or_else(|| user_id.clone(), |id| id.to_string()))
-                                .unwrap_or_else(|| user_id.clone());
-                            
-                            info!("✅ Successfully obtained user info (standalone): user_id={}, name={}", user_id, name);
-                            
-                            Ok(OAuthUserInfo {
-                                id,
-                                user_id,
-                                name,
+        .await
+    {
+        Ok(response) => {
+            if response.status().is_success() {
+                // Check response text
+                let response_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unable to read response".to_string());
+                info!("📋 Settings API response (standalone): {}", response_text);
+
+                // Try JSON parsing
+                match serde_json::from_str::<System76UserSettings>(&response_text) {
+                    Ok(settings) => {
+                        // Extract user info from settings
+                        let user = settings.user.as_ref();
+
+                        // 이메일을 우선으로 user_id 설정
+                        let user_id = user
+                            .as_ref()
+                            .and_then(|u| u.email.clone())
+                            .unwrap_or_else(|| "unknown_user@example.com".to_string());
+
+                        // first_name과 last_name을 조합하여 이름 생성
+                        let name = user
+                            .as_ref()
+                            .and_then(|u| match (u.first_name.as_ref(), u.last_name.as_ref()) {
+                                (Some(first), Some(last)) => Some(format!("{} {}", first, last)),
+                                (Some(first), None) => Some(first.clone()),
+                                (None, Some(last)) => Some(last.clone()),
+                                _ => None,
                             })
-                        },
-                        Err(e) => {
-                            error!("❌ Failed to parse settings response (standalone): {}", e);
-                            Err(AuthError::ExternalServiceError(format!("Failed to parse settings response: {}", e)))
-                        }
+                            .unwrap_or(user_id.clone());
+
+                        // ID 설정
+                        let id = user
+                            .as_ref()
+                            .map(|u| u.id.map_or_else(|| user_id.clone(), |id| id.to_string()))
+                            .unwrap_or_else(|| user_id.clone());
+
+                        info!(
+                            "✅ Successfully obtained user info (standalone): user_id={}, name={}",
+                            user_id, name
+                        );
+
+                        Ok(OAuthUserInfo { id, user_id, name })
                     }
-                } else {
-                    let status = response.status();
-                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                    error!("❌ Settings info request failed (standalone): {} - {}", status, error_text);
-                    Err(AuthError::ExternalServiceError(format!("Settings request failed: {} - {}", status, error_text)))
+                    Err(e) => {
+                        error!("❌ Failed to parse settings response (standalone): {}", e);
+                        Err(AuthError::ExternalServiceError(format!(
+                            "Failed to parse settings response: {}",
+                            e
+                        )))
+                    }
                 }
-            },
-            Err(e) => {
-                error!("❌ Failed to send settings request (standalone): {}", e);
-                Err(AuthError::ExternalServiceError(format!("Failed to send settings request: {}", e)))
+            } else {
+                let status = response.status();
+                let error_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                error!(
+                    "❌ Settings info request failed (standalone): {} - {}",
+                    status, error_text
+                );
+                Err(AuthError::ExternalServiceError(format!(
+                    "Settings request failed: {} - {}",
+                    status, error_text
+                )))
             }
         }
+        Err(e) => {
+            error!("❌ Failed to send settings request (standalone): {}", e);
+            Err(AuthError::ExternalServiceError(format!(
+                "Failed to send settings request: {}",
+                e
+            )))
+        }
+    }
 }
 
 /// get or generate user's encryption key
-async fn get_encryption_key(account_hash: &str, storage: Arc<dyn Storage>) -> Result<Option<String>> {
+async fn get_encryption_key(
+    account_hash: &str,
+    storage: Arc<dyn Storage>,
+) -> Result<Option<String>> {
     // get account encryption key
     match storage.get_encryption_key(account_hash).await {
         Ok(Some(key)) => {
-            debug!("Found existing encryption key for account: {}", account_hash);
+            debug!(
+                "Found existing encryption key for account: {}",
+                account_hash
+            );
             return Ok(Some(key));
-        },
+        }
         Ok(None) => {
-            debug!("No encryption key found for account: {}, will generate a new one", account_hash);
-        },
+            debug!(
+                "No encryption key found for account: {}, will generate a new one",
+                account_hash
+            );
+        }
         Err(e) => {
             error!("Error fetching encryption key from storage: {}", e);
             // if error occurs, generate a new one
         }
     }
-    
+
     // try to get encryption key from existing devices
     let devices = match storage.list_devices(account_hash).await {
         Ok(device_list) => device_list,
@@ -836,24 +998,30 @@ async fn get_encryption_key(account_hash: &str, storage: Arc<dyn Storage>) -> Re
             Vec::new()
         }
     };
-    
+
     // if there are existing devices, print the first device id
     if !devices.is_empty() {
         let device_hash = &devices[0].device_hash;
         debug!("Using existing device for encryption key: {}", device_hash);
     }
-    
+
     // generate a new encryption key
     let mut key = [0u8; 32];
     OsRng.fill_bytes(&mut key);
     let encryption_key = hex::encode(key);
-    
+
     // store the new encryption key
-    if let Err(e) = storage.store_encryption_key(account_hash, &encryption_key).await {
+    if let Err(e) = storage
+        .store_encryption_key(account_hash, &encryption_key)
+        .await
+    {
         error!("Failed to store new encryption key: {}", e);
     } else {
-        debug!("Successfully stored new encryption key for account: {}", account_hash);
+        debug!(
+            "Successfully stored new encryption key for account: {}",
+            account_hash
+        );
     }
-    
+
     Ok(Some(encryption_key))
 }

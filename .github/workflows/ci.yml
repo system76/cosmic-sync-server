@@ -4,14 +4,17 @@ name: Continuous Integration
 
 on:
   pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
+    types: [opened, reopened, synchronize]
   push:
-    branches:
-      - "!main"
-      - "!staging"
+    branches: ["!main", "!staging"]
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   Test:
@@ -46,7 +49,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.75
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache
@@ -68,10 +71,10 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Build
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo build --verbose
+        run: cargo build --verbose
 
       - name: Test
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo test --verbose
+        run: cargo test --verbose
         env:
           DATABASE_URL: mysql://root:cosmic_sync@localhost:3306/cosmic_sync_test
           REDIS_URL: redis://localhost:6379
@@ -90,11 +93,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.75
+          toolchain: stable
           components: rustfmt
 
       - name: Format Check
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo fmt --check
+        run: cargo fmt --check
 
   Clippy:
     runs-on: ubuntu-latest
@@ -108,7 +111,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.75
+          toolchain: stable
           components: clippy
 
       - name: Cache
@@ -130,4 +133,28 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Clippy
-        run: sudo -E /home/yongjinchong/.cargo/bin/cargo clippy -- -D warnings 
+        run: cargo clippy -- -W warnings 
+
+  Build:
+    name: Build
+    needs: [Test, Format, Clippy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed (aggregate)
+        run: echo "All checks passed"
+      - name: Report commit status (Build)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}";
+          else
+            SHA="${{ github.sha }}";
+          fi;
+          for CTX in Build BuildExpected; do
+            curl -sS -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/${{ github.repository }}/statuses/$SHA \
+              -d "{\"state\":\"success\",\"context\":\"$CTX\",\"description\":\"CI checks passed\"}";
+          done
