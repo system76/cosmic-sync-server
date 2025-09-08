@@ -37,7 +37,7 @@ COPY src ./src
 
 # Build the application
 RUN cargo build --release
-
+# RUN cargo build --release --bin cosmic-sync-server
 # Runtime stage
 FROM debian:bookworm-slim
 
