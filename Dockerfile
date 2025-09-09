@@ -22,22 +22,14 @@ COPY Cargo.toml Cargo.lock build.rs ./
 # Copy proto files for gRPC compilation
 COPY proto ./proto
 
-# Create dummy sources to build dependencies (avoid missing lib.rs error)
-RUN mkdir -p src \
-    && echo "fn main() {}" > src/main.rs \
-    && echo "pub fn dummy() {}" > src/lib.rs
-
-# Build dependencies (this layer will be cached unless Cargo.toml changes)
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs && echo "pub fn dummy() {}" > src/lib.rs
 RUN cargo build --release
+
 RUN rm -f src/main.rs src/lib.rs
-
-# Copy source code and crates
 COPY src ./src
-#COPY crates ./crates
+RUN cargo clean
 
-# Build the application
-RUN cargo build --release
-# RUN cargo build --release --bin cosmic-sync-server
+RUN cargo build --release --bin cosmic-sync-server
 # Runtime stage
 FROM debian:bookworm-slim
 
