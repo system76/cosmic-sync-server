@@ -74,7 +74,6 @@ jobs:
           cluster: genesis76-us-east-2
           wait-for-service-stability: false
 
-
       - name: App health check (no ECS read permissions required)
         env:
           HEALTHCHECK_URL: https://sync.genesis76.com/health
