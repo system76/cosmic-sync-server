@@ -74,12 +74,17 @@ jobs:
           cluster: genesis76-us-east-2
           wait-for-service-stability: false
 
+
       - name: App health check (no ECS read permissions required)
+        env:
+          HEALTHCHECK_URL: https://sync.genesis76.com/health
         run: |
           echo "Waiting for app health endpoint..."
           set +e
+          sleep 30
+          URL="${HEALTHCHECK_URL:-https://sync.genesis76.com/health}"
           for i in $(seq 1 30); do
-            if curl -fsS https://sync.genesis76.com/health; then
+            if curl -fsS --http2 -A 'GitHubActionsHealthCheck/1.0' -H 'Accept: application/json' "$URL"; then
               echo "App is healthy"
               exit 0
             fi
