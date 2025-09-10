@@ -297,6 +297,9 @@ impl ConfigLoader {
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
 
+        let ssl_mode = self.get_config_value("DB_SSL_MODE", None).await;
+        let ssl_ca_path = self.get_config_value("DB_SSL_CA", None).await;
+
         DatabaseConfig {
             user,
             password,
@@ -306,6 +309,8 @@ impl ConfigLoader {
             max_connections,
             connection_timeout,
             log_queries,
+            ssl_mode,
+            ssl_ca_path,
         }
     }
 
@@ -665,6 +670,45 @@ impl ConfigLoader {
         }
     }
 
+    /// Get Redis configuration from secrets or environment
+    pub async fn get_redis_config(&self) -> super::settings::RedisConfig {
+        use super::settings::RedisConfig;
+
+        let default_enabled = if cfg!(feature = "redis-cache") { "true" } else { "false" };
+        let enabled = self
+            .get_config_value("REDIS_ENABLED", Some(default_enabled))
+            .await
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(cfg!(feature = "redis-cache"));
+
+        // Prefer explicit URL; otherwise compose from host/port
+        let url = {
+            let host_opt = self.get_config_value("REDIS_HOST", None).await;
+            match host_opt {
+                Some(host) if !host.is_empty() => {
+                    let port = self
+                        .get_config_value("REDIS_PORT", Some("6379"))
+                        .await
+                        .and_then(|p| p.parse::<u16>().ok())
+                        .unwrap_or(6379);
+                    Some(format!("redis://{}:{}/0", host, port))
+                }
+                _ => None,
+            }
+        };
+
+        let key_prefix = self
+            .get_config_value("REDIS_KEY_PREFIX", Some("cosmic.sync"))
+            .await
+            .unwrap_or_else(|| "cosmic.sync".to_string());
+
+        RedisConfig {
+            enabled,
+            url,
+            key_prefix,
+        }
+    }
+
     /// Load complete configuration
     pub async fn load_config(&self) -> super::settings::Config {
         info!(
@@ -678,6 +722,7 @@ impl ConfigLoader {
         let logging = self.get_logging_config().await;
         let features = self.get_feature_flags().await;
         let message_broker = super::settings::MessageBrokerConfig::load();
+        let redis = self.get_redis_config().await;
         let server_encode_key = self.get_server_encode_key().await;
 
         info!("Configuration loaded successfully");
@@ -689,6 +734,7 @@ impl ConfigLoader {
             logging,
             features,
             message_broker,
+            redis,
             server_encode_key,
         }
     }

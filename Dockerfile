@@ -23,13 +23,13 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
 
 RUN mkdir -p src && echo "fn main() {}" > src/main.rs && echo "pub fn dummy() {}" > src/lib.rs
-RUN cargo build --release
+RUN cargo build --release --features redis-cache
 
 RUN rm -f src/main.rs src/lib.rs
 COPY src ./src
 RUN cargo clean
 
-RUN cargo build --release --bin cosmic-sync-server
+RUN cargo build --release --bin cosmic-sync-server --features redis-cache
 # Runtime stage
 FROM debian:bookworm-slim
 
@@ -61,8 +61,8 @@ USER appuser
 EXPOSE 50051 8080
 
 # Health check using HTTP endpoint
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD curl -fsS --connect-timeout 2 --max-time 5 http://localhost:8080/health || exit 1
 
 # Run the server
 CMD ["./cosmic-sync-server"]

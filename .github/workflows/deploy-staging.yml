@@ -80,19 +80,19 @@ jobs:
         run: |
           echo "Waiting for app health endpoint..."
           set +e
-          sleep 30
+          sleep 60
           URL="${HEALTHCHECK_URL:-https://sync.genesis76.com/health}"
-          for i in $(seq 1 30); do
-            if curl -fsS --http2 -A 'GitHubActionsHealthCheck/1.0' -H 'Accept: application/json' "$URL"; then
+          for i in $(seq 1 60); do
+            if curl -fsS --http2 --connect-timeout 5 --max-time 8 -A 'GitHubActionsHealthCheck/1.0' -H 'Accept: application/json' -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "$URL"; then
               echo "App is healthy"
               exit 0
             fi
             # Fallback to HTTP/1.1 in case ALB enforces HTTP/1.1 only
-            if curl -fsS --http1.1 -A 'GitHubActionsHealthCheck/1.0' -H 'Accept: application/json' "$URL"; then
+            if curl -fsS --http1.1 --connect-timeout 5 --max-time 8 -A 'GitHubActionsHealthCheck/1.0' -H 'Accept: application/json' -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "$URL"; then
               echo "App is healthy (HTTP/1.1)"
               exit 0
             fi
-            sleep 5
+            sleep 10
           done
           echo "App health check failed"
           exit 1
