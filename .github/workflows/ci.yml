@@ -71,15 +71,15 @@ jobs:
           sudo apt-get install -y protobuf-compiler
 
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --verbose --features redis-cache
 
       - name: Test
         run: cargo test --verbose
         env:
           DATABASE_URL: mysql://root:cosmic_sync@localhost:3306/cosmic_sync_test
-          REDIS_URL: redis://localhost:6379
-          DB_HOST: localhost
           REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          DB_HOST: localhost
 
   Format:
     runs-on: ubuntu-latest

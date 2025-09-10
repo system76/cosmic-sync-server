@@ -456,6 +456,7 @@ impl AppState {
             features: crate::config::settings::FeatureFlags::default(),
             storage: crate::config::settings::StorageConfig::default(),
             message_broker: crate::config::settings::MessageBrokerConfig::load(),
+            redis: crate::config::settings::RedisConfig::load(),
             server_encode_key: None,
         };
 

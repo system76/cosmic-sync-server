@@ -265,3 +265,12 @@ If file synchronization isn't working:
 ## License
 
 This project is licensed under the terms of the GNU General Public License v3.0.
+
+## Cloud DB/Cache configuration
+
+- MySQL (required)
+  - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME`
+  - Optional TLS: `DB_SSL_MODE` (DISABLED|PREFERRED|REQUIRED|VERIFY_CA|VERIFY_IDENTITY), `DB_SSL_CA` (path)
+- Redis (optional; enable with build feature `redis-cache` and/or env)
+  - `REDIS_ENABLED=true`, `REDIS_HOST=<host>`, `REDIS_PORT=6379`
+  - Optional: `REDIS_KEY_PREFIX` (default: `cosmic.sync`)

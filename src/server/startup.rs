@@ -320,6 +320,8 @@ fn parse_mysql_url(url: &str) -> Result<crate::config::settings::DatabaseConfig>
         max_connections: 50,
         connection_timeout: 30,
         log_queries: false,
+        ssl_mode: None,
+        ssl_ca_path: None,
     })
 }
 
