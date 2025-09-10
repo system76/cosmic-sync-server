@@ -455,6 +455,113 @@ pub struct S3Config {
     pub max_retries: u32,
 }
 
+impl Default for S3Config {
+    fn default() -> Self {
+        Self {
+            region: crate::config::constants::DEFAULT_S3_REGION.to_string(),
+            bucket: crate::config::constants::DEFAULT_S3_BUCKET.to_string(),
+            key_prefix: crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string(),
+            access_key_id: None,
+            secret_access_key: None,
+            session_token: None,
+            endpoint_url: None,
+            force_path_style: crate::config::constants::DEFAULT_S3_FORCE_PATH_STYLE,
+            use_secret_manager: crate::config::constants::DEFAULT_S3_USE_SECRET_MANAGER,
+            secret_name: None,
+            timeout_seconds: crate::config::constants::DEFAULT_S3_TIMEOUT_SECONDS,
+            max_retries: crate::config::constants::DEFAULT_S3_MAX_RETRIES,
+        }
+    }
+}
+
+impl S3Config {
+    pub fn load() -> Self {
+        let region = env::var("AWS_REGION")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_REGION.to_string());
+        let bucket = env::var("AWS_S3_BUCKET")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_BUCKET.to_string());
+        let key_prefix = env::var("S3_KEY_PREFIX")
+            .unwrap_or_else(|_| crate::config::constants::DEFAULT_S3_KEY_PREFIX.to_string());
+
+        let access_key_id = env::var("AWS_ACCESS_KEY_ID").ok();
+        let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY").ok();
+        let session_token = env::var("AWS_SESSION_TOKEN").ok();
+        let endpoint_url = env::var("S3_ENDPOINT_URL").ok();
+
+        let force_path_style = env::var("S3_FORCE_PATH_STYLE")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(crate::config::constants::DEFAULT_S3_FORCE_PATH_STYLE);
+
+        let use_secret_manager = env::var("USE_AWS_SECRET_MANAGER")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(crate::config::constants::DEFAULT_S3_USE_SECRET_MANAGER);
+
+        let secret_name = env::var("AWS_SECRET_NAME").ok();
+
+        let timeout_seconds = env::var("S3_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_S3_TIMEOUT_SECONDS);
+
+        let max_retries = env::var("S3_MAX_RETRIES")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_S3_MAX_RETRIES);
+
+        Self {
+            region,
+            bucket,
+            key_prefix,
+            access_key_id,
+            secret_access_key,
+            session_token,
+            endpoint_url,
+            force_path_style,
+            use_secret_manager,
+            secret_name,
+            timeout_seconds,
+            max_retries,
+        }
+    }
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            storage_type: StorageType::default(),
+            s3: S3Config::default(),
+            file_ttl_secs: crate::config::constants::DEFAULT_FILE_TTL_SECS,
+            max_file_revisions: crate::config::constants::DEFAULT_MAX_FILE_REVISIONS,
+        }
+    }
+}
+
+impl StorageConfig {
+    pub fn load() -> Self {
+        let storage_type = env::var("STORAGE_TYPE")
+            .unwrap_or_else(|_| "database".to_string())
+            .parse()
+            .unwrap_or(StorageType::Database);
+
+        let file_ttl_secs = env::var("FILE_TTL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_FILE_TTL_SECS);
+
+        let max_file_revisions = env::var("MAX_FILE_REVISIONS")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .unwrap_or(crate::config::constants::DEFAULT_MAX_FILE_REVISIONS);
+
+        Self {
+            storage_type,
+            s3: S3Config::load(),
+            file_ttl_secs,
+            max_file_revisions,
+        }
+    }
+}
+
 /// Message broker configuration settings (RabbitMQ)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageBrokerConfig {
