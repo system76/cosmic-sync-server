@@ -642,10 +642,17 @@ impl RedisConfig {
             .unwrap_or(default_enabled);
         let url = {
             let host = env::var("REDIS_HOST").ok();
-            let port = env::var("REDIS_PORT").ok().and_then(|p| p.parse::<u16>().ok()).unwrap_or(6379);
+            let port = env::var("REDIS_PORT")
+                .ok()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(6379);
             host.map(|h| format!("redis://{}:{}/0", h, port))
         };
         let key_prefix = env::var("REDIS_KEY_PREFIX").unwrap_or_else(|_| "cosmic.sync".to_string());
-        Self { enabled, url, key_prefix }
+        Self {
+            enabled,
+            url,
+            key_prefix,
+        }
     }
 }

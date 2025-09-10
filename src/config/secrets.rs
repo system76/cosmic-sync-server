@@ -674,7 +674,11 @@ impl ConfigLoader {
     pub async fn get_redis_config(&self) -> super::settings::RedisConfig {
         use super::settings::RedisConfig;
 
-        let default_enabled = if cfg!(feature = "redis-cache") { "true" } else { "false" };
+        let default_enabled = if cfg!(feature = "redis-cache") {
+            "true"
+        } else {
+            "false"
+        };
         let enabled = self
             .get_config_value("REDIS_ENABLED", Some(default_enabled))
             .await
