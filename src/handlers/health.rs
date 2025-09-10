@@ -35,15 +35,15 @@ pub async fn health_check() -> ActixResult<HttpResponse> {
 }
 
 /// HTTP readiness check endpoint
-pub async fn readiness_check(app_state: web::Data<crate::server::app_state::AppState>) -> ActixResult<HttpResponse> {
+pub async fn readiness_check(
+    app_state: web::Data<crate::server::app_state::AppState>,
+) -> ActixResult<HttpResponse> {
     // Perform basic dependency checks
-    let storage_ok = app_state
-        .storage
-        .health_check()
-        .await
-        .unwrap_or(false);
+    let storage_ok = app_state.storage.health_check().await.unwrap_or(false);
 
-    let message_broker_enabled = crate::server::app_state::AppState::get_config().message_broker.enabled;
+    let message_broker_enabled = crate::server::app_state::AppState::get_config()
+        .message_broker
+        .enabled;
 
     let status = if storage_ok { "ready" } else { "degraded" };
     let body = json!({
@@ -73,15 +73,13 @@ pub async fn liveness_check() -> ActixResult<HttpResponse> {
 }
 
 /// Detailed health for external debugging
-pub async fn health_details(app_state: web::Data<crate::server::app_state::AppState>) -> ActixResult<HttpResponse> {
+pub async fn health_details(
+    app_state: web::Data<crate::server::app_state::AppState>,
+) -> ActixResult<HttpResponse> {
     let cfg = crate::server::app_state::AppState::get_config();
 
     // Check storage availability
-    let storage_ok = app_state
-        .storage
-        .health_check()
-        .await
-        .unwrap_or(false);
+    let storage_ok = app_state.storage.health_check().await.unwrap_or(false);
 
     // Summarize configuration flags (safe subset)
     let details = json!({
