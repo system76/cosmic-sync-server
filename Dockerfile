@@ -5,13 +5,17 @@ FROM rust:slim AS builder
 ARG VCS_REF
 ARG BUILD_DATE
 ARG VERSION
+ARG RUST_TARGET=x86_64-unknown-linux-musl
 
-# Install build dependencies including protobuf compiler
+# Install build dependencies including protobuf compiler and musl toolchain
 RUN apt-get update && apt-get install -y \
     pkg-config \
-    libssl-dev \
     protobuf-compiler \
+    musl-tools \
     && rm -rf /var/lib/apt/lists/*
+
+# Enable target
+RUN rustup target add ${RUST_TARGET}
 
 # Create app directory
 WORKDIR /app
@@ -23,46 +27,26 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
 
 RUN mkdir -p src && echo "fn main() {}" > src/main.rs && echo "pub fn dummy() {}" > src/lib.rs
-RUN cargo build --release --features redis-cache
+RUN cargo build --release --features redis-cache --target ${RUST_TARGET}
 
 RUN rm -f src/main.rs src/lib.rs
 COPY src ./src
 RUN cargo clean
 
-RUN cargo build --release --bin cosmic-sync-server --features redis-cache
+RUN cargo build --release --bin cosmic-sync-server --features redis-cache --target ${RUST_TARGET}
 # Runtime stage
-FROM debian:bookworm-slim
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create app user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /app
 
-# Copy the binary from builder stage
-COPY --from=builder /app/target/release/cosmic-sync-server /app/cosmic-sync-server
-
-# Copy configuration files if needed
+# Copy the binary from builder stage (musl static)
+ARG RUST_TARGET=x86_64-unknown-linux-musl
+COPY --from=builder /app/target/${RUST_TARGET}/release/cosmic-sync-server /app/cosmic-sync-server
 COPY config ./config
 
-# Create data directory
-RUN mkdir -p /app/data && chown -R appuser:appuser /app
+USER nonroot:nonroot
 
-# Switch to non-root user
-USER appuser
-
-# Expose ports
 EXPOSE 50051 8080
 
-# Health check using HTTP endpoint
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-  CMD curl -fsS --connect-timeout 2 --max-time 5 http://localhost:8080/health || exit 1
-
-# Run the server
-CMD ["./cosmic-sync-server"]
+# Distroless lacks curl; rely on container orchestrator health checks
+ENTRYPOINT ["/app/cosmic-sync-server"]
