@@ -54,10 +54,17 @@ static REDIS_MANAGER: OnceCell<ConnectionManager> = OnceCell::const_new();
 
 #[cfg(feature = "redis-cache")]
 async fn get_redis_manager() -> Option<ConnectionManager> {
-    let url = match std::env::var("REDIS_URL") {
-        Ok(u) => u,
-        Err(_) => return None,
+    // Prefer explicit env, fallback to config loader
+    // Build from REDIS_HOST/REDIS_PORT only (do not use REDIS_URL)
+    let host = match std::env::var("REDIS_HOST") {
+        Ok(h) if !h.is_empty() => h,
+        _ => return None,
     };
+    let port = std::env::var("REDIS_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(6379);
+    let url = format!("redis://{}:{}/0", host, port);
     let mgr_ref = REDIS_MANAGER
         .get_or_init(|| async move {
             match RedisClient::open(url.clone()) {
@@ -102,7 +109,7 @@ async fn mark_seen_id_async(id: &str) -> bool {
             }
         }
     } else {
-        // No REDIS_URL set → fallback to in-memory tracker
+        // No REDIS_HOST/REDIS_PORT set → fallback to in-memory tracker
         #[cfg(not(feature = "redis-cache"))]
         {
             let mut seen = SEEN_IDS.lock().unwrap();

@@ -157,6 +157,7 @@ impl ContainerBuilder {
                 ..Default::default()
             },
             message_broker: crate::config::settings::MessageBrokerConfig::default(),
+            redis: crate::config::settings::RedisConfig::default(),
             server_encode_key: None,
         };
 
