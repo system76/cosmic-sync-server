@@ -34,7 +34,7 @@ ENVIRONMENT=development cargo run
 AWS Secrets Manager를 사용하여 설정을 관리합니다.
 
 **필요한 AWS Secret:**
-- Secret Name: `staging/so-dod/cosmic-sync/config`
+- Secret Name: `staging/genesis76/cosmic-sync/config`
 - Secret JSON: `aws-secret-staging.json` 참조
 
 **설정 예시:**
@@ -91,7 +91,7 @@ Staging/Production 환경에서는 다음 IAM 권한이 필요합니다:
                 "secretsmanager:GetSecretValue"
             ],
             "Resource": [
-                "arn:aws:secretsmanager:us-east-2:*:secret:staging/so-dod/cosmic-sync/config*",
+                "arn:aws:secretsmanager:us-east-2:*:secret:staging/genesis76/cosmic-sync/config*",
                 "arn:aws:secretsmanager:us-east-2:*:secret:production/pop-os/cosmic-sync/config*"
             ]
         },
@@ -119,7 +119,7 @@ Staging/Production 환경에서는 다음 IAM 권한이 필요합니다:
 **Staging 환경:**
 ```bash
 aws secretsmanager create-secret \
-    --name "staging/so-dod/cosmic-sync/config" \
+    --name "staging/genesis76/cosmic-sync/config" \
     --description "Cosmic Sync Server staging configuration" \
     --secret-string file://aws-secret-staging.json \
     --region us-east-2

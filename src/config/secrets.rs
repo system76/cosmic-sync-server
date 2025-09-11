@@ -86,7 +86,7 @@ impl ConfigLoader {
 
         // Generate secret name based on environment using infrastructure patterns
         let secret_name = match self.environment {
-            Environment::Staging => "staging/so-dod/cosmic-sync/config",
+            Environment::Staging => "staging/genesis76/cosmic-sync/config",
             Environment::Production => "production/pop-os/cosmic-sync/config",
             Environment::Development => {
                 warn!("Development environment should not use AWS Secrets Manager");

@@ -224,6 +224,10 @@ async fn start_http_server(config: &ServerConfig, app_state: Arc<AppState>) -> R
                 "/health/live",
                 web::get().to(handlers::health::liveness_check),
             )
+            .route(
+                "/health/details",
+                web::get().to(handlers::health::health_details),
+            )
             // Metrics endpoints
             .route(
                 "/metrics",
