@@ -14,13 +14,16 @@ env:
 jobs:
   Publish:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.STAGING_AWS_OIDC_ROLE_ARN }}
+          role-session-name: cosmic-sync-staging
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -37,6 +40,7 @@ jobs:
         env:
           ECR_REPOSITORY: ${{ secrets.STAGING_AWS_ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
+        if: ${{ env.AWS_REGION != '' }}
         run: |
           docker build \
             --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
