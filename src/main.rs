@@ -188,7 +188,7 @@ async fn build_config() -> Result<Config> {
 
     if environment.is_cloud() {
         let secret_path = if environment == Environment::Staging {
-            "staging/so-dod/cosmic-sync/config"
+            "staging/genesis76/cosmic-sync/config"
         } else {
             "production/pop-os/cosmic-sync/config"
         };
