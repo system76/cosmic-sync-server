@@ -550,7 +550,7 @@ impl StorageFactory {
         }
 
         // 트랜잭션 자동 커밋 설정 확인(sqlx)
-        match sqlx::query_scalar::<_, String>("SELECT @@autocommit")
+        match sqlx::query_scalar::<_, i64>("SELECT @@autocommit")
             .fetch_optional(storage.get_sqlx_pool())
             .await
         {

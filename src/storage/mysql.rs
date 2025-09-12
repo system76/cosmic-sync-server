@@ -642,8 +642,7 @@ impl MySqlStorage {
                 INDEX (account_hash),
                 INDEX (watcher_id),
                 INDEX (account_hash, watcher_id),
-                FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE,
-                FOREIGN KEY (watcher_id) REFERENCES watchers(id) ON DELETE CASCADE
+                FOREIGN KEY (account_hash) REFERENCES accounts(account_hash) ON DELETE CASCADE
             )";
 
             sqlx::query(create_watcher_conditions_table)
@@ -801,6 +800,21 @@ impl MySqlStorage {
                     StorageError::Database(format!("watchers 테이블 생성 실패: {}", e))
                 })?;
             info!("watchers 테이블 생성 완료");
+
+            // Ensure FK from watcher_conditions(watcher_id) to watchers(id) after watchers table exists
+            if let Err(e) = sqlx::query(
+                r#"ALTER TABLE watcher_conditions
+                   ADD CONSTRAINT fk_watcher_conditions_watcher
+                   FOREIGN KEY (watcher_id) REFERENCES watchers(id) ON DELETE CASCADE"#,
+            )
+            .execute(self.get_sqlx_pool())
+            .await
+            {
+                warn!(
+                    "watcher_conditions FK(watcher_id) 추가 실패(이미 존재 가능): {}",
+                    e
+                );
+            }
         }
 
         // watchers 복합 유니크 인덱스 보장 (account_hash, local_group_id, watcher_id)
