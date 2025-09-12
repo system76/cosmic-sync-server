@@ -36,7 +36,8 @@ impl MySqlStorage {
     /// Create new storage from URL (builds both mysql_async and sqlx pools)
     pub async fn new_with_url(url: &str) -> Result<Self> {
         let sqlx_pool = SqlxMySqlPoolOptions::new()
-            .max_connections(10)
+            .max_connections(5)
+            .acquire_timeout(std::time::Duration::from_secs(15))
             .connect(url)
             .await
             .map_err(|e| StorageError::Connection(format!("Failed to connect via sqlx: {}", e)))?;

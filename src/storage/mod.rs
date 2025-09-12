@@ -522,11 +522,8 @@ impl StorageFactory {
         let password = config.password.clone();
         let database = config.name.clone();
 
-        // 연결 URL 생성 (secure_auth=false로 SSL 비활성화)
-        let connection_url = format!(
-            "mysql://{}:{}@{}:{}/{}?ssl-mode=DISABLED",
-            user, password, host, port, database
-        );
+        // 연결 URL 생성 (DatabaseConfig::url 사용)
+        let connection_url = config.url();
 
         // Create storage using sqlx pool
         let storage = MySqlStorage::new_with_url(&connection_url)
