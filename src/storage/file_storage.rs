@@ -30,7 +30,10 @@ pub struct DatabaseFileStorage {
 impl DatabaseFileStorage {
     pub async fn new() -> Result<Self> {
         // Create MySQL storage from configuration
-        let config = crate::config::settings::Config::load();
+        let config = match crate::config::settings::Config::load_async().await {
+            Ok(cfg) => cfg,
+            Err(_) => crate::config::settings::Config::load(),
+        };
 
         match Self::create_mysql_storage_from_config(&config).await {
             Ok(mysql_storage) => {
